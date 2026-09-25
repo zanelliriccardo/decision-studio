@@ -109,6 +109,43 @@ class DecisionObjectiveRequest(BaseModel):
     decision_objective: str = Field(..., max_length=2000)
 
 
+class AnchorOption(BaseModel):
+    key: str = ""
+    label: str = Field(..., max_length=200)
+
+
+class AnchorOutcome(BaseModel):
+    key: str = ""
+    label: str = Field(..., max_length=200)
+    measure: str = Field("", max_length=200)
+
+
+class DecisionAnchor(BaseModel):
+    """The decision, stated so the pipeline can steer by it.
+
+    Keys (O1, Y1 ...) are optional on input and assigned when missing; existing
+    keys are preserved because claims refer to them.
+    """
+
+    decision: str = Field(..., max_length=2000)
+    options: list[AnchorOption] = Field(default_factory=list, max_length=10)
+    outcomes: list[AnchorOutcome] = Field(default_factory=list, max_length=10)
+    deadline: str = Field("", max_length=200)
+    constraints: list[str] = Field(default_factory=list, max_length=10)
+    status: str = "draft"
+
+
+class DecisionAnchorResponse(BaseModel):
+    project_id: UUID
+    anchor: DecisionAnchor | None = None
+
+
+class DecisionAnchorSaveResponse(DecisionAnchorResponse):
+    """The saved anchor, and what saving it changed in an existing graph."""
+
+    report: dict[str, int] = Field(default_factory=dict)
+
+
 # --- Theories ---
 
 

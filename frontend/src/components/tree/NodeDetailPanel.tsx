@@ -10,6 +10,7 @@ import { CAUSAL_TYPE_META, LOGIC_GATE_META, BIAS_SEVERITY_COLORS, formatTimeDela
 import Badge from '../ui/Badge.tsx'
 import Progress from '../ui/Progress.tsx'
 import Tooltip from '../ui/Tooltip.tsx'
+import NodeAnchorSection from '../anchor/NodeAnchorSection.tsx'
 
 function HintIcon({ hint }: { hint: string }) {
   return (
@@ -117,6 +118,9 @@ export default function NodeDetailPanel({
             </div>
           )}
         </div>
+
+        {/* How this claim bears on the decision (anchored projects only) */}
+        <NodeAnchorSection node={node} anchor={graph.decisionAnchor} />
 
         {/* Assertion firmness -- a property of the source text */}
         <div>

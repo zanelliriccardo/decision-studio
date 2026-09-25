@@ -451,6 +451,10 @@ async def infer_links_for_new_claims(
             "prior": c.prior,
             "order_index": c.order_index,
             "embedding": _as_vector(c.embedding, placeholder),
+            # Carried so the inferrer can keep anchor outcomes as sinks.
+            "origin": c.origin,
+            "decision_role": c.decision_role,
+            "relevance": c.relevance,
         }
         for c in claims
     ]
@@ -460,8 +464,15 @@ async def infer_links_for_new_claims(
 
     from decision_studio.pipeline.causal_inferrer import CausalInferrer
 
+    from decision_studio.reasoning.anchor_service import inference_context
+
     inferrer = CausalInferrer(llm or get_llm_client(enable_cache=False))
-    raw_edges = await inferrer.infer_incremental(payload, new_indices)
+    # The same context the pipeline inferred the rest of the graph with: a link
+    # for a hand-added claim judged without the decision or the intake answers
+    # would rest on a different reading of the material from its neighbours.
+    raw_edges = await inferrer.infer_incremental(
+        payload, new_indices, extra_context=inference_context(project)
+    )
 
     existing_pairs = {
         (str(e.source_claim_id), str(e.target_claim_id))

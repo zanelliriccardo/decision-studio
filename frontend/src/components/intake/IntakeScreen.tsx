@@ -8,6 +8,13 @@ import { useAnalysis } from '../../context/AnalysisContext.tsx'
 import { useT } from '../../i18n/index.tsx'
 import { useIntakeEnabled } from '../../hooks/useIntakeEnabled.ts'
 import type { AnalyzeResponse } from '../../types/api.ts'
+import type { DecisionAnchor } from '../../types/graph.ts'
+import DecisionAnchorCard from '../anchor/DecisionAnchorCard.tsx'
+import {
+  cleanForSave,
+  draftDecisionAnchor,
+  fetchDecisionAnchor,
+} from '../../lib/decisionAnchor.ts'
 import type {
   IntakeAnswer,
   IntakeQuestion,
@@ -32,6 +39,11 @@ import type {
  * clear the screen forwards to the analysis without the user seeing it — which
  * is also what happens when generation fails, and when the deployment has the
  * feature switched off.
+ *
+ * The decision anchor rides along and never holds anything up. It is drafted
+ * only once there are questions to show — when the screen is skipped the
+ * pipeline drafts its own — and it is sent with the start only if the user
+ * changed it, so an untouched draft stays a draft.
  */
 export default function IntakeScreen() {
   const { projectId } = useParams<{ projectId: string }>()
@@ -43,6 +55,34 @@ export default function IntakeScreen() {
   const [questions, setQuestions] = useState<IntakeQuestion[] | null>(null)
   const [answers, setAnswers] = useState<Record<string, IntakeAnswer>>({})
   const [starting, setStarting] = useState(false)
+  const [anchor, setAnchor] = useState<DecisionAnchor | null>(null)
+  const [anchorLoading, setAnchorLoading] = useState(false)
+  const [anchorEdited, setAnchorEdited] = useState(false)
+
+  // Drafted once the questions are known to exist: until then the screen may
+  // forward straight to the analysis, and a draft nobody will see is a model
+  // call the pipeline would repeat anyway.
+  const hasQuestions = (questions?.length ?? 0) > 0
+  useEffect(() => {
+    if (!projectId || !hasQuestions) return
+    let cancelled = false
+    setAnchorLoading(true)
+    void (async () => {
+      try {
+        // A reload finds the draft already made rather than asking again.
+        const existing = await fetchDecisionAnchor(projectId)
+        const found = existing ?? (await draftDecisionAnchor(projectId))
+        if (!cancelled) setAnchor(found)
+      } catch {
+        // No anchor is a correct outcome: the run proceeds without one.
+      } finally {
+        if (!cancelled) setAnchorLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, hasQuestions])
 
   useEffect(() => {
     if (!projectId) return
@@ -104,6 +144,7 @@ export default function IntakeScreen() {
       const body = payload ?? Object.values(answers)
       await apiPost<AnalyzeResponse>(`/api/v1/intake/${projectId}/start`, {
         answers: body,
+        ...(anchorEdited && anchor ? { decision_anchor: cleanForSave(anchor) } : {}),
       })
       dispatch({ type: 'START_ANALYSIS', projectId })
       navigate(`/analysis/${projectId}`)
@@ -164,6 +205,20 @@ export default function IntakeScreen() {
           {t.intake.subtitle}
         </p>
       </header>
+
+      {(anchor || anchorLoading) && (
+        <div className="space-y-1.5">
+          <DecisionAnchorCard
+            anchor={anchor}
+            loading={anchorLoading}
+            onChange={(next) => {
+              setAnchor(next)
+              setAnchorEdited(true)
+            }}
+          />
+          <p className="text-[11px] text-text-muted px-1">{t.anchor.intakeHint}</p>
+        </div>
+      )}
 
       {questions.map((question) => {
         const answer = answers[question.id]

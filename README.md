@@ -30,7 +30,8 @@ Decision Studio processes input through a multi-layer pipeline:
 
 **Initial Analysis** — extract claims from user text and build the seed graph:
 
-1. **Claim Decomposition** — LLM extracts atomic claims (FACT / ASSUMPTION / PREDICTION / OPINION) with confidence scores and source sentence provenance for audit trails
+0. **Decision Anchor** — when a decision is stated, the model drafts its options and the outcomes that define success (editable, never required). Outcomes become nodes in the graph, so inference has a destination; see [HANDOVER §4.10](HANDOVER.md#410-the-decision-anchor)
+1. **Claim Decomposition** — LLM extracts atomic claims (FACT / ASSUMPTION / PREDICTION / OPINION) with confidence scores and source sentence provenance for audit trails. With an anchor, each claim is also scored — never filtered — for its role (lever, contingency, mechanism, background), its relevance to the decision, and the options and outcomes it bears on
 2. **Causal Link Inference** — Embedding similarity filters candidate pairs, then LLM judges causal direction, mechanism, and strength. Post-LLM validation gates reject edges with empty mechanisms, restated claims, or extreme strength values
 3. **Bias Audit** — Detects 8 cognitive bias types and penalizes causal strength accordingly
 4. **Evidence Grounding** — Adversarial dual search (supporting + contradicting) via Brave Search, scored for relevance, source credibility, and cross-domain diversity

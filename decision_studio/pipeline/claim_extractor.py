@@ -16,8 +16,13 @@ from decision_studio.llm.client import LLMClient
 from decision_studio.llm.embeddings import EmbeddingService
 from decision_studio.llm.prompts import language_instruction
 from decision_studio.llm.prompts.claim_extraction import (
-    CLAIM_EXTRACTION_SCHEMA,
-    CLAIM_EXTRACTION_SYSTEM,
+    claim_extraction_schema,
+    claim_extraction_system,
+)
+from decision_studio.reasoning.decision_anchor import (
+    anchor_keys,
+    clean_claim_scores,
+    render_anchor,
 )
 
 logger = logging.getLogger(__name__)
@@ -124,7 +129,10 @@ class ClaimExtractor:
         self._embedder = embedder
 
     async def extract(
-        self, text: str, extra_context: str | None = None
+        self,
+        text: str,
+        extra_context: str | None = None,
+        anchor: dict[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], bool]:
         """Extract atomic claims from the given text.
 
@@ -142,6 +150,10 @@ class ClaimExtractor:
                 prompt. Repeated per chunk rather than sent once, because each
                 chunk is an independent call and a disambiguation that only
                 reached the first would leave the rest split differently.
+            anchor: The decision anchor, when the project has one. Each claim
+                is then also scored for its role, relevance and the options and
+                outcomes it bears on. Scored, never filtered: see
+                ``reasoning/decision_anchor.py``.
 
         Returns:
             A tuple of (claims, has_temporal_relevance).
@@ -155,21 +167,40 @@ class ClaimExtractor:
         chunks = _chunk_text(text)
         logger.info("Extracting claims from %d chunk(s)", len(chunks))
 
+        anchored = bool(anchor)
+        keys = anchor_keys(anchor)
+        # The decision leads, then the reading of the material, then the text:
+        # each line of the prompt is read in the light of the ones above it.
+        preamble = "".join(
+            f"{part}\n\n" for part in (render_anchor(anchor), extra_context) if part
+        )
+
         all_raw_claims: list[dict[str, Any]] = []
         has_temporal = True
         for i, chunk in enumerate(chunks):
             logger.debug("Processing chunk %d/%d (%d chars)", i + 1, len(chunks), len(chunk))
             try:
                 result = await self._llm.complete_json(
-                    system=CLAIM_EXTRACTION_SYSTEM,
+                    system=claim_extraction_system(anchored),
                     user=(
-                        (f"{extra_context}\n\n" if extra_context else "")
+                        preamble
                         + f"Extract all atomic claims from the following text:\n\n{chunk}"
                         f"{language_instruction(chunk)}"
                     ),
-                    schema=CLAIM_EXTRACTION_SCHEMA,
+                    schema=claim_extraction_schema(anchored),
                 )
                 claims = result.get("claims", [])
+                for c in claims:
+                    if anchored:
+                        c.update(clean_claim_scores(c, keys))
+                    else:
+                        # Not every provider enforces the schema. A relevance
+                        # score volunteered without an anchor measures relevance
+                        # to nothing, and once persisted would mark the project
+                        # as anchored everywhere downstream.
+                        for field in ("decision_role", "relevance",
+                                      "relevance_reason", "bears_on"):
+                            c.pop(field, None)
                 # Use logprob-based confidence if available (more calibrated
                 # than LLM self-reported confidence scores)
                 logprob_conf = result.get("_logprob_confidence")
@@ -253,11 +284,16 @@ class ClaimExtractor:
             len(claims), len(unique_indices),
         )
 
+        # order_index is left alone. The orchestrator uses it to find each
+        # claim's already-saved row, so renumbering here pointed every claim
+        # after the first dropped duplicate at its neighbour's row — and deleted
+        # the wrong rows as "duplicates". Chunks overlap by design, so on long
+        # material a dropped duplicate is the normal case, not the exception.
+        # (claim_dedup documents the same trap and avoids it the same way.)
         result_claims: list[dict[str, Any]] = []
-        for order, idx in enumerate(unique_indices):
+        for idx in unique_indices:
             claim = claims[idx]
             claim["embedding"] = embeddings[idx]
-            claim["order_index"] = order
             result_claims.append(claim)
 
         return result_claims

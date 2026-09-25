@@ -21,6 +21,9 @@ from decision_studio.api.models.reasoning import (
     AdversaryReport,
     CausalChainStep,
     ChangeSummary,
+    DecisionAnchor,
+    DecisionAnchorResponse,
+    DecisionAnchorSaveResponse,
     DecisionObjectiveRequest,
     GenerateTheoriesRequest,
     GraphOperationListResponse,
@@ -69,6 +72,7 @@ from decision_studio.db.models import (
 from decision_studio.db.session import get_session
 from decision_studio.exceptions import LLMError
 from decision_studio.reasoning import adversary as adversary_service
+from decision_studio.reasoning import anchor_service
 from decision_studio.reasoning import authoring as authoring_service
 from decision_studio.reasoning import brief as brief_service
 from decision_studio.reasoning import debate_service
@@ -78,6 +82,7 @@ from decision_studio.reasoning import outside_view as outside_view_service
 from decision_studio.reasoning import review as review_service
 from decision_studio.reasoning import theories as theory_service
 from decision_studio.reasoning.calibration import band
+from decision_studio.reasoning.decision_anchor import normalise_anchor
 from decision_studio.reasoning.effective_graph import is_claim_effective, is_edge_effective
 from decision_studio.reasoning.review import ReviewChange, ReviewError
 
@@ -459,8 +464,74 @@ async def set_decision_objective(
     """
     project = await _require_project(project_id, session)
     project.decision_objective = req.decision_objective.strip() or None
+    # The anchor restates the objective; keep the two saying the same thing.
+    # Options and outcomes are left alone — re-drafting them would discard
+    # the user's corrections because a sentence was reworded.
+    anchor = normalise_anchor(project.decision_anchor)
+    if anchor is not None and project.decision_objective:
+        project.decision_anchor = {**anchor, "decision": project.decision_objective}
     await session.commit()
     return await get_graph_revision(project_id, session)
+
+
+# ---------------------------------------------------------------------------
+# Decision anchor
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/graph/{project_id}/decision-anchor", response_model=DecisionAnchorResponse
+)
+async def get_decision_anchor(
+    project_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> DecisionAnchorResponse:
+    """The project's decision anchor, or null when it has none."""
+    await _require_project(project_id, session)
+    anchor = await anchor_service.get_anchor(session, project_id)
+    return DecisionAnchorResponse(project_id=project_id, anchor=anchor)
+
+
+@router.post(
+    "/graph/{project_id}/decision-anchor/draft", response_model=DecisionAnchorResponse
+)
+async def draft_decision_anchor(
+    project_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> DecisionAnchorResponse:
+    """Draft an anchor from the stated objective and the material.
+
+    Null without an objective, and on any model failure: the anchor improves a
+    run that can proceed without it. Never overwrites a confirmed anchor.
+    """
+    await _require_project(project_id, session)
+    anchor = await anchor_service.draft_for_project(session, project_id)
+    return DecisionAnchorResponse(project_id=project_id, anchor=anchor)
+
+
+@router.put(
+    "/graph/{project_id}/decision-anchor", response_model=DecisionAnchorSaveResponse
+)
+async def save_decision_anchor(
+    project_id: UUID,
+    req: DecisionAnchor,
+    session: AsyncSession = Depends(get_session),
+) -> DecisionAnchorSaveResponse:
+    """Save a confirmed anchor.
+
+    When the graph already exists, outcome nodes are synchronised and every
+    claim is re-scored against the new anchor — without re-running the pipeline.
+    """
+    await _require_project(project_id, session)
+    try:
+        result = await anchor_service.save_anchor(
+            session, project_id, req.model_dump()
+        )
+    except anchor_service.AnchorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return DecisionAnchorSaveResponse(
+        project_id=project_id, anchor=result["anchor"], report=result["report"]
+    )
 
 
 # ---------------------------------------------------------------------------

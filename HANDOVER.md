@@ -534,6 +534,79 @@ Three switches: a per-browser preference (default on, including when
 localStorage is unreadable), a switch on the questions screen for the moment
 someone has had enough, and `INTAKE_ENABLED=false` for the operator.
 
+### 4.10 The decision anchor
+
+`project.decision_anchor` · `reasoning/decision_anchor.py` ·
+`reasoning/anchor_service.py` · `graph/anchoring.py` · migration 022
+
+**The problem.** The graph was built without the decision. Extraction was told
+to extract every claim, inference started from root causes and asked what each
+one caused, and `decision_objective` was first read by theory generation — after
+the graph existed. Claims described the documents; theories had to bridge from
+them to a choice nobody had shown the graph.
+
+**The shape of the fix** comes from Aristotle (Bocconi's theory-based decision
+tool): fix *what success looks like, by when, under which constraints* first,
+and treat a theory as a causal map from attributes to that success. The anchor
+is that problem statement in the smallest form that changes the graph:
+
+| Part | What it does |
+|---|---|
+| `decision` | One sentence, kept in step with `decision_objective` |
+| `options` O1..O4 | Claims name the options they bear on (`bears_on`). **Not graph nodes**: a choice has no probability, and mutually exclusive options in noisy-OR would assert a belief about which one the user picks |
+| `outcomes` Y1..Y3 | **Become graph nodes** (`origin='frame'`, `decision_role='outcome'`), so inference has a destination |
+| `deadline`, `constraints` | Rendered into prompts; nothing enforced yet |
+
+Drafted by the model from the objective and the material; never invented
+without an objective (no objective, no anchor, and the run is the one it always
+was). On the intake screen it is a pre-filled card that is drafted only when
+there are questions to show, and sent only if edited — it never stands between
+the user and the analysis.
+
+**What the pipeline does with it:**
+
+- **Extraction** sees the anchor and scores each claim: `decision_role` (lever,
+  contingency, mechanism, outcome, background — the theory-based view's
+  attributes), `relevance` 0-1 with a reason, and `bears_on`. **Scored, never
+  filtered** (§6 explains why). It may also extract an implication the text
+  clearly supports as an ASSUMPTION — the bridge claims that were missing.
+- **Outcome nodes** join after dedup, so an extracted claim restating a success
+  criterion is never merged into one.
+- **Inference** offers every outcome to every source, bypassing the similarity
+  filter: an outcome is phrased as a criterion and rarely shares vocabulary with
+  what drives it. Outcomes are never roots and never sources.
+- **The edge budget** sorts by strength × (0.5 + 0.5 × relevance) instead of
+  strength. Unscored claims weigh 1.0, which is the old ordering.
+- **Discovery** expands only edges on a path to an outcome, or between relevant
+  claims — all edges when nothing is anchored yet. New claims are scored.
+- **Theory context** ranks claims by relevance instead of word overlap with the
+  objective, always includes the outcomes, and asks each theory to end its chain
+  at one and name the option it favours.
+
+**Relevance has two sources, and the larger wins.** The model's per-claim score,
+and *structural* relevance from causal hops to the nearest outcome
+(`graph/anchoring.py`: 0 → 1.0, 1 → 0.85, 2 → 0.65, 3 → 0.45, further → 0.3,
+hand-chosen like everything in §10). Structure can only promote. A claim the
+model read as background (< 0.4) that sits on a path to an outcome is
+**peripheral** — the surprising factor the tool exists to surface — and the UI
+lists these separately. The **decision lens** (default view on anchored graphs)
+shows claims within three hops of an outcome, claims with relevance ≥ 0.5, and
+every peripheral claim. It is a view: the claims browser lists everything.
+
+**Editing afterwards costs a re-score, not a re-run.** `PUT
+/graph/{id}/decision-anchor` renames outcome nodes in place (links kept), adds
+new ones with incremental inference, deactivates removed ones (reversible), and
+re-scores every claim at one call per forty. Keys are never reissued — a deleted
+Y2's key would hand its node and links to a different outcome — so the service
+reserves every key the project has used. The same call anchors a project built
+before anchors existed.
+
+**Measuring it.** `python -m decision_studio.tools.anchor_report <project-id>`
+reports claims, components, the share that reaches an outcome, relevance
+distribution, peripheral count and how many theories reach an outcome. Run it on
+an old project, anchor that project from the summary page, run it again; then
+compare with a fresh anchored run.
+
 ---
 
 ## 5. Bugs found and fixed
@@ -728,6 +801,24 @@ constant, and this system exposes what it cannot calibrate.
 - The summary page typed the graph response as `CausalGraph`, but the API returns
   `claims`, not `nodes` — `graph.nodes` was `undefined` and every read crashed.
 
+### 5.12 Near-duplicate removal pointed claims at the wrong rows
+
+`ClaimExtractor.embed_claims` drops claims above 0.95 similarity and then
+renumbered `order_index`. The orchestrator uses `order_index` to find each
+claim's already-saved row, so every claim after the first dropped duplicate
+received its neighbour's embedding, and the rows deleted as "duplicates" were
+the wrong ones. Chunks overlap by 1000 characters by design, so on long material
+a dropped duplicate is the normal case. `claim_dedup` documents the same trap and
+avoids it; `embed_claims` now leaves `order_index` alone too. Regression test in
+`tests/test_extraction_and_inference_anchor.py`.
+
+### 5.13 Intake context dropped for part of the graph
+
+Causal inference expands claims unreachable from the roots in a second pass,
+which omitted `extra_context`: those links were judged without the intake
+answers. Manual authoring's incremental inference passed no context at all. Both
+now receive the same context as the rest of the graph (anchor, then intake).
+
 ---
 
 ## 6. Known open issues
@@ -745,14 +836,15 @@ claim is logged individually, and the count reaches the UI: a filter that
 discards a fifth of the input silently is one nobody can check, and this one is
 a model's judgement about what counts as paperwork.
 
-The other half remains: the extraction prompt still says `Extract ALL claims
-present in the text` with no relevance criterion, and **never sees
-`decision_objective`**. Passing the objective and asking for a relevance score —
-a score rather than a filter, so nothing is lost and the threshold stays
-adjustable — is the remaining intervention. Note the risk: in a strategic
-decision the deciding factor is often the one nobody connected to the problem,
-so a hard relevance filter would discard exactly the thing the tool exists to
-surface.
+The other half is now addressed by the decision anchor (§4.10): extraction sees
+the decision and scores each claim for relevance — a score rather than a
+filter, so nothing is lost and the threshold stays adjustable. The risk that
+shaped it: in a strategic decision the deciding factor is often the one nobody
+connected to the problem, so a hard relevance filter would discard exactly the
+thing the tool exists to surface. Hence structural relevance and the
+"peripheral" list. Whether it reduces claim *volume* is not yet measured — the
+extraction prompt still extracts everything; what changes is what is shown,
+expanded and budgeted. Use `tools/anchor_report.py` on real material.
 
 **Claim dedup on contract material.** On one set of contract documents, dedup
 merged 710 of 1186 claims — a very high proportion, and the threshold (0.86) has
@@ -852,6 +944,10 @@ TEST_DATABASE_URL=postgresql+asyncpg://decision_studio:decision_studio@localhost
 # Frontend
 cd frontend && npm test
 ```
+
+`tests/` is listed in `.gitignore`, so most of the suite described here is not
+in the repository. The decision-anchor tests were added with `git add -f`; the
+entry is worth removing so tests are versioned by default.
 
 No test contacts an LLM or a search provider. `FakeLLMClient` replays canned
 structured output, so the suite runs without credentials and spends nothing.

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowDown, ArrowRight, Download, GitBranch, Loader2,
-  Lightbulb, MinusCircle, PlusCircle, Radar, ShieldAlert,
+  Lightbulb, MinusCircle, PlusCircle, Radar, ShieldAlert, Target,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useT } from '../../i18n/index.tsx'
@@ -10,6 +10,9 @@ import * as reasoningApi from '../../lib/api/reasoning.ts'
 import { apiGet } from '../../lib/api/client.ts'
 import type { Theory } from '../../types/reasoning.ts'
 import ObjectiveEditor from './ObjectiveEditor.tsx'
+import DecisionAnchorCard from '../anchor/DecisionAnchorCard.tsx'
+import { draftDecisionAnchor, toAnchor } from '../../lib/decisionAnchor.ts'
+import type { DecisionAnchor } from '../../types/graph.ts'
 import UsagePanel from './UsagePanel.tsx'
 
 /**
@@ -38,6 +41,8 @@ export default function DecisionSummary() {
   const [generating, setGenerating] = useState(false)
   const [savingObjective, setSavingObjective] = useState(false)
   const [usage, setUsage] = useState<reasoningApi.AnalysisUsage | null>(null)
+  const [anchor, setAnchor] = useState<DecisionAnchor | null>(null)
+  const [draftingAnchor, setDraftingAnchor] = useState(false)
 
   useEffect(() => {
     if (!projectId) return
@@ -52,6 +57,7 @@ export default function DecisionSummary() {
           apiGet<{
             claims: { id: string; text: string }[]
             decision_objective?: string | null
+            decision_anchor?: unknown
           }>(`/api/v1/graph/${projectId}`),
           reasoningApi.fetchRecommendation(projectId),
           reasoningApi.fetchUsage(projectId),
@@ -60,6 +66,7 @@ export default function DecisionSummary() {
         setTheories(loadedTheories.theories)
         setClaims(loadedGraph.claims ?? [])
         setObjective(loadedGraph.decision_objective ?? null)
+        setAnchor(toAnchor(loadedGraph.decision_anchor))
         setAdvice(loadedAdvice)
         setUsage(loadedUsage)
       } catch (err) {
@@ -104,6 +111,8 @@ export default function DecisionSummary() {
               try {
                 await reasoningApi.setDecisionObjective(projectId, next)
                 setObjective(next)
+                // The server keeps the anchor's decision in step; mirror it.
+                setAnchor((prev) => (prev ? { ...prev, decision: next } : prev))
                 // The advice was written against the old question, so it now
                 // answers something nobody asked. Clearing it makes that
                 // visible rather than leaving stale advice on the page.
@@ -119,6 +128,46 @@ export default function DecisionSummary() {
             })()
           }}
         />
+        <div className="mt-3">
+          {anchor || draftingAnchor ? (
+            <DecisionAnchorCard
+              anchor={anchor}
+              loading={draftingAnchor}
+              projectId={projectId}
+              onSaved={(saved) => {
+                setAnchor(saved)
+                setObjective(saved.decision)
+                // Written against the old decision: clear it, as for the objective.
+                setAdvice(null)
+              }}
+            />
+          ) : (
+            objective && (
+              // An analysis from before anchors existed. Drafting one here and
+              // saving it links outcome nodes into the existing graph and scores
+              // every claim — no re-run.
+              <button
+                type="button"
+                onClick={() => {
+                  if (!projectId) return
+                  setDraftingAnchor(true)
+                  void draftDecisionAnchor(projectId)
+                    .then((drafted) => {
+                      setAnchor(drafted)
+                      if (!drafted) toast.error(t.anchor.saveFailed)
+                    })
+                    .catch(() => toast.error(t.anchor.saveFailed))
+                    .finally(() => setDraftingAnchor(false))
+                }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg bg-amber-500/10 text-amber-300 border border-amber-500/25 hover:bg-amber-500/20 transition-colors"
+                data-testid="anchor-retrofit"
+              >
+                <Target className="w-3 h-3" aria-hidden="true" />
+                {t.anchor.retrofit}
+              </button>
+            )
+          )}
+        </div>
       </header>
 
       {/* The answer, before the explanations it rests on. Someone who has

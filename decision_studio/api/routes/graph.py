@@ -27,11 +27,22 @@ from decision_studio.api.models.graph import (
 from decision_studio.db.models import CausalEdge, Claim, Project
 from decision_studio.pipeline.evidence_grounder import EvidenceGrounder
 from decision_studio.db.session import async_session, get_session
+from decision_studio.graph.anchoring import (
+    anchor_distances,
+    effective_relevance,
+    in_lens,
+    is_peripheral,
+)
 from decision_studio.graph.belief_propagation import propagate_beliefs
 from decision_studio.graph.stability import belief_intervals
 from decision_studio.graph.critical_path import find_critical_path
 from decision_studio.graph.edge_weight import inflation as edge_inflation
-from decision_studio.reasoning.effective_graph import effective_strength
+from decision_studio.reasoning.effective_graph import (
+    effective_strength,
+    is_claim_effective,
+    is_edge_effective,
+)
+from decision_studio.reasoning.decision_anchor import ORIGIN_FRAME, ROLE_OUTCOME
 
 logger = logging.getLogger(__name__)
 
@@ -153,9 +164,33 @@ def _assemble_graph_response(
     intervals: dict[str, tuple[float, float]] | None = None,
     graph_revision: int = 1,
     decision_objective: str | None = None,
+    decision_anchor: dict | None = None,
 ) -> GraphResponse:
     """Build a GraphResponse from DB objects and computed graph attributes."""
     critical_path_set = set(critical_path)
+
+    # Distances are measured on the graph as analysed — the effective graph,
+    # after the user's rejections — so a rejected link stops counting as a
+    # path to the decision the moment it is rejected.
+    outcome_ids = [
+        str(c.id) for c in claims
+        if getattr(c, "origin", None) == ORIGIN_FRAME
+        and getattr(c, "decision_role", None) == ROLE_OUTCOME
+    ]
+    distances: dict = {}
+    if outcome_ids:
+        active_ids = {str(c.id) for c in claims if is_claim_effective(c)}
+        effective = nx.DiGraph()
+        effective.add_nodes_from(active_ids)
+        effective.add_edges_from(
+            (str(e.source_claim_id), str(e.target_claim_id))
+            for e in edges
+            if is_edge_effective(e, active_ids) and not getattr(e, "is_feedback", False)
+        )
+        distances = anchor_distances(effective, [o for o in outcome_ids if o in active_ids])
+    anchored = bool(outcome_ids) or any(
+        getattr(c, "relevance", None) is not None for c in claims
+    )
     node_sensitivities = sensitivity.get("nodes", {})
     edge_sensitivities = sensitivity.get("edges", {})
 
@@ -191,6 +226,7 @@ def _assemble_graph_response(
                 prior=getattr(claim, "prior", claim.confidence),
                 corroborated_by=getattr(claim, "corroborated_by", None),
                 duplicate_count=getattr(claim, "duplicate_count", 0) or 0,
+                **_anchor_fields(claim, distances.get(node_id), anchored),
             )
         )
 
@@ -279,7 +315,29 @@ def _assemble_graph_response(
         has_temporal=has_temporal,
         graph_revision=graph_revision,
         decision_objective=decision_objective,
+        decision_anchor=decision_anchor,
     )
+
+
+def _anchor_fields(claim: Claim, distance: int | None, anchored: bool) -> dict:
+    """A claim's relation to the decision anchor, for the response.
+
+    Without an anchor every claim is in the lens and none is peripheral, so a
+    client that applies the lens unconditionally shows an unanchored project
+    exactly as before.
+    """
+    stated = getattr(claim, "relevance", None)
+    return {
+        "origin": getattr(claim, "origin", "ai") or "ai",
+        "decision_role": getattr(claim, "decision_role", None),
+        "relevance": stated,
+        "relevance_reason": getattr(claim, "relevance_reason", None),
+        "bears_on": getattr(claim, "bears_on", None),
+        "anchor_distance": distance,
+        "effective_relevance": effective_relevance(stated, distance),
+        "is_peripheral": anchored and is_peripheral(stated, distance),
+        "in_lens": (not anchored) or in_lens(stated, distance),
+    }
 
 
 async def _load_project_graph(
@@ -321,11 +379,13 @@ async def _compute_full_graph(
 
     graph_revision = getattr(project, "graph_revision", 1) or 1
     decision_objective = getattr(project, "decision_objective", None)
+    decision_anchor = getattr(project, "decision_anchor", None)
 
     if not claims:
         return GraphResponse(
             project_id=project_id, claims=[], edges=[], has_temporal=has_temporal,
             graph_revision=graph_revision, decision_objective=decision_objective,
+            decision_anchor=decision_anchor,
         )
 
     graph = _build_nx_graph(claims, edges)
@@ -346,6 +406,7 @@ async def _compute_full_graph(
         intervals=intervals,
         graph_revision=graph_revision,
         decision_objective=decision_objective,
+        decision_anchor=decision_anchor,
     )
 
 

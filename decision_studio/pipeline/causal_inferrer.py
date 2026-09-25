@@ -24,6 +24,7 @@ from decision_studio.llm.prompts.causal_inference import (
     CAUSAL_INFERENCE_SCHEMA,
     CAUSAL_INFERENCE_SYSTEM,
 )
+from decision_studio.graph.anchoring import edge_priority, is_outcome_claim
 from decision_studio.graph.edge_weight import edge_strength, split_legacy_strength
 from decision_studio.pipeline.validation import validate_causal_output
 
@@ -94,13 +95,20 @@ class CausalInferrer:
             logger.info("Fewer than 2 claims; no causal inference needed")
             return []
 
+        # Anchor outcome nodes are destinations: every source is offered them as
+        # candidates, none is ever expanded as a source or treated as a root.
+        outcomes = {i for i, c in enumerate(claims) if is_outcome_claim(c)}
+
         # Step 1: Identify root causes
-        root_indices = await self._identify_roots(claims, extra_context)
+        root_indices = [
+            i for i in await self._identify_roots(claims, extra_context)
+            if i not in outcomes
+        ]
         logger.info("BFS: identified %d root causes from %d claims", len(root_indices), len(claims))
 
         if not root_indices:
             # Fallback: treat all claims as potential roots
-            root_indices = list(range(len(claims)))
+            root_indices = [i for i in range(len(claims)) if i not in outcomes]
 
         # Step 2: BFS expansion — for each claim, find what it causes
         # Use embedding similarity to pre-filter candidates per source
@@ -119,6 +127,8 @@ class CausalInferrer:
                 if source_idx in visited_nodes:
                     continue
                 visited_nodes.add(source_idx)
+                if source_idx in outcomes:
+                    continue
                 # Find candidate targets using embedding similarity
                 candidates = self._find_candidates_for_source(
                     claims, source_idx
@@ -152,7 +162,10 @@ class CausalInferrer:
         # Step 3: Expand any unvisited nodes — BFS from roots may miss
         # claims that are not reachable from root causes but still have
         # causal relationships among themselves.
-        unvisited = [i for i in range(len(claims)) if i not in visited_nodes]
+        unvisited = [
+            i for i in range(len(claims))
+            if i not in visited_nodes and i not in outcomes
+        ]
         if unvisited:
             logger.info(
                 "BFS: expanding %d unvisited nodes after root BFS", len(unvisited)
@@ -167,7 +180,7 @@ class CausalInferrer:
                     tasks.append(
                         self._expand_node(
                             claims, source_idx, candidates,
-                            semaphore, visited_edges,
+                            semaphore, visited_edges, extra_context,
                         )
                     )
 
@@ -184,9 +197,14 @@ class CausalInferrer:
         # that a 25-claim graph yields ≤50 edges, not 100+.
         max_edges = max(10, len(claims) * 2)
 
+        # Outcomes are sinks. The expansion prompt never offers an outcome as a
+        # source, so this only guards against a malformed payload.
+        edges = [e for e in edges if e["source_idx"] not in outcomes]
+
         if len(edges) > max_edges:
-            # Keep the strongest edges
-            edges.sort(key=lambda e: e.get("strength", 0), reverse=True)
+            # Keep the strongest edges, weighted towards the decision when the
+            # claims carry relevance (identical to plain strength otherwise).
+            edges.sort(key=lambda e: edge_priority(e, claims), reverse=True)
             dropped = len(edges) - max_edges
             edges = edges[:max_edges]
             logger.info(
@@ -249,6 +267,9 @@ class CausalInferrer:
                 logger.warning("Incremental inference failed for a pair: %s", result)
                 continue
             if result is not None:
+                if is_outcome_claim(all_claims[result["source_idx"]]):
+                    # A pair judge may run either way; an outcome is a sink.
+                    continue
                 edges.append(result)
 
         logger.info("Incremental inference confirmed %d new edges", len(edges))
@@ -316,7 +337,17 @@ class CausalInferrer:
 
         # Sort by similarity descending, keep top-K
         scored.sort(key=lambda x: x[1], reverse=True)
-        return [idx for idx, _ in scored[:_MAX_CANDIDATES_PER_NODE]]
+        candidates = [idx for idx, _ in scored[:_MAX_CANDIDATES_PER_NODE]]
+
+        # Outcomes are always on offer, whatever their similarity. An outcome is
+        # phrased as a success criterion and rarely shares vocabulary with the
+        # claims that drive it, so the similarity filter would keep the graph
+        # from ever reaching the decision. At most three, so the prompt grows
+        # by a few lines and the call count not at all.
+        for j, claim in enumerate(claims):
+            if j != source_idx and j not in candidates and is_outcome_claim(claim):
+                candidates.append(j)
+        return candidates
 
     async def _expand_node(
         self,
@@ -420,6 +451,8 @@ class CausalInferrer:
         normalized = embeddings / norms
         similarity_matrix = normalized @ normalized.T
 
+        outcomes = {i for i, c in enumerate(claims) if is_outcome_claim(c)}
+
         pairs: list[tuple[int, int]] = []
         n = len(claims)
         for i in range(n):
@@ -427,7 +460,11 @@ class CausalInferrer:
                 # At least one must be a new claim
                 if i not in new_indices and j not in new_indices:
                     continue
-                if similarity_matrix[i, j] > _SIMILARITY_THRESHOLD:
+                if i in outcomes and j in outcomes:
+                    continue
+                # Pairs with an outcome skip the similarity filter, for the same
+                # reason as in _find_candidates_for_source.
+                if i in outcomes or j in outcomes or similarity_matrix[i, j] > _SIMILARITY_THRESHOLD:
                     pairs.append((i, j))
 
         return pairs

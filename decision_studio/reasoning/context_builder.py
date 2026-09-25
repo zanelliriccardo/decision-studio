@@ -25,6 +25,13 @@ from typing import Any
 import networkx as nx
 
 from decision_studio.db.models import CausalEdge, Claim, Evidence, Theory
+from decision_studio.graph.anchoring import anchor_distances, effective_relevance
+from decision_studio.reasoning.decision_anchor import (
+    ORIGIN_FRAME,
+    ROLE_OUTCOME,
+    normalise_anchor,
+    render_anchor,
+)
 from decision_studio.reasoning.effective_graph import GraphSnapshot, effective_strength
 
 logger = logging.getLogger(__name__)
@@ -142,7 +149,18 @@ def score_claims(
     business-critical always outranks a merely well-connected one.
     """
     scores: dict[str, float] = {}
-    keywords = _objective_keywords(decision_objective)
+
+    # With an anchor, relevance comes from the anchor: the model's per-claim
+    # score, lifted by graph distance to an outcome. The keyword overlap is kept
+    # only as the fallback for projects built before anchors — it counted shared
+    # words longer than three letters, which ranks a claim repeating the
+    # objective's vocabulary above the one that decides it.
+    outcome_ids = [str(c.id) for c in claims if _is_outcome(c)]
+    anchored = bool(outcome_ids) or any(
+        getattr(c, "relevance", None) is not None for c in claims
+    )
+    distances = anchor_distances(graph, outcome_ids) if outcome_ids else {}
+    keywords = set() if anchored else _objective_keywords(decision_objective)
 
     try:
         critical_path = _critical_path(graph)
@@ -186,6 +204,16 @@ def score_claims(
 
         score += (claim.confidence or 0.0) * 0.5
 
+        if anchored:
+            relevance = effective_relevance(
+                getattr(claim, "relevance", None), distances.get(cid)
+            )
+            # Weighted like business-critical status: the decision is the
+            # strongest relevance signal there is short of the user's own flag.
+            score += (relevance or 0.0) * 4.0
+            if _is_outcome(claim):
+                score += 3.0
+
         if keywords:
             text_tokens = {w.lower().strip(".,;:!?") for w in (claim.text or "").split()}
             overlap = len(keywords & text_tokens)
@@ -194,6 +222,14 @@ def score_claims(
         scores[cid] = score
 
     return scores
+
+
+def _is_outcome(claim: Claim) -> bool:
+    """An anchor outcome node."""
+    return (
+        getattr(claim, "origin", None) == ORIGIN_FRAME
+        and getattr(claim, "decision_role", None) == ROLE_OUTCOME
+    )
 
 
 def _critical_path(graph: nx.DiGraph) -> list[str]:
@@ -260,6 +296,8 @@ def select_subgraph(
     keep_ids = {str(c.id) for c in ranked[:max_claims]}
     # Always keep the critical path intact, even if it costs a few slots.
     keep_ids.update(critical_path[: max_claims // 2])
+    # And the outcomes: a theory about the decision needs its destination.
+    keep_ids.update(str(c.id) for c in snapshot.claims if _is_outcome(c))
 
     claims = [c for c in snapshot.claims if str(c.id) in keep_ids]
     edges = [
@@ -351,7 +389,14 @@ def build_generation_context(
 
     lines.append("# Decision context")
     lines.append(f"Project: {project.title}")
-    if getattr(project, "decision_objective", None):
+    anchor = normalise_anchor(getattr(project, "decision_anchor", None))
+    if anchor is not None:
+        lines.append(render_anchor(anchor).rstrip())
+        lines.append(
+            "Claims marked OUTCOME are these success criteria as graph nodes. A "
+            "theory that bears on the decision should reach one of them."
+        )
+    elif getattr(project, "decision_objective", None):
         lines.append(f"Decision objective: {project.decision_objective}")
     else:
         lines.append(
@@ -384,6 +429,12 @@ def build_generation_context(
             flags.append(f"user_review={status}")
         if getattr(claim, "user_note", None):
             flags.append(f'user_note="{claim.user_note}"')
+        if _is_outcome(claim):
+            flags.append("OUTCOME")
+        elif getattr(claim, "decision_role", None):
+            flags.append(f"role={claim.decision_role}")
+        if getattr(claim, "bears_on", None) and not _is_outcome(claim):
+            flags.append(f"bears_on={','.join(claim.bears_on)}")
         flag_str = f" [{'; '.join(flags)}]" if flags else ""
         lines.append(
             f"- [{ref}] ({claim.claim_type}, confidence={claim.confidence:.2f}) "

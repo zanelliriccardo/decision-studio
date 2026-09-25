@@ -35,6 +35,11 @@ reference token
 - an element that is absent from the context was rejected or disabled by the \
 user, or is out of scope — never reconstruct it
 - respect human notes and strength overrides: they outrank your own inference
+- when the context contains OUTCOME claims (the user's success criteria), a \
+theory bears on the decision only if its causal chain reaches one: end the chain \
+at an OUTCOME claim wherever the graph allows, and in the recommendation name \
+the option (O1, O2 ...) the theory favours. A theory whose chain reaches no \
+outcome is describing the situation — say so in weak_assumptions
 - treat business-critical status as a relevance signal, not as proof
 - do not fabricate sources, quotes or identifiers
 - avoid duplicate theories: two theories resting on substantially the same \

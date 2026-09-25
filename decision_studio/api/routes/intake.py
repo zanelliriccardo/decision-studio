@@ -41,6 +41,11 @@ from decision_studio.api.sources import (
 from decision_studio.db.models import IntakeQuestion, Project
 from decision_studio.db.session import get_session
 from decision_studio.reasoning import intake as intake_service
+from decision_studio.reasoning.decision_anchor import (
+    STATUS_CONFIRMED,
+    anchor_keys,
+    normalise_anchor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +167,17 @@ async def start_analysis(
         session, project_id, [a.model_dump() for a in req.answers]
     )
     context = intake_service.render_answers(questions)
+
+    if req.decision_anchor is not None:
+        # Confirmed by being submitted: the user saw it and started from it.
+        anchor = normalise_anchor(
+            req.decision_anchor,
+            status=STATUS_CONFIRMED,
+            reserved=anchor_keys(normalise_anchor(project.decision_anchor)),
+        )
+        if anchor is not None:
+            project.decision_anchor = anchor
+            project.decision_objective = anchor["decision"]
 
     # Stored verbatim: six months on, the question is what the model actually
     # read, and re-rendering under changed code would answer a different one.

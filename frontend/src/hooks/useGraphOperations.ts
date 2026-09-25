@@ -4,6 +4,7 @@ import { apiPost, apiGet } from '../lib/api/client.ts'
 import { useAnalysis } from '../context/AnalysisContext.tsx'
 import { useT } from '../i18n/index.tsx'
 import { computeVisibleNodes, findTopPaths } from '../lib/graph/focusCompute.ts'
+import { anchorNodeFields, toAnchor } from '../lib/decisionAnchor.ts'
 import type {
   ApiGraphOperationResult,
   ApiChallengeResult,
@@ -36,6 +37,7 @@ export function transformApiGraph(api: Record<string, unknown>): CausalGraph {
     prior: (n.prior as number) ?? (n.confidence as number),
     corroboratedBy: (n.corroborated_by as string[]) ?? null,
     duplicateCount: (n.duplicate_count as number) ?? 0,
+    ...anchorNodeFields(n),
   })) ?? []
 
   const edges = (api.edges as Array<Record<string, unknown>>)?.map((e) => ({
@@ -88,6 +90,7 @@ export function transformApiGraph(api: Record<string, unknown>): CausalGraph {
     hasTemporal: (api.has_temporal as boolean) ?? true,
     graphRevision: (api.graph_revision as number) ?? 1,
     decisionObjective: (api.decision_objective as string) ?? null,
+    decisionAnchor: toAnchor(api.decision_anchor),
   }
 }
 

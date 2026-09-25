@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from decision_studio.db.models import AnalysisUsage, Claim, CausalEdge, Evidence, Project
 from decision_studio.evidence.web_search import BraveSearchClient
 from decision_studio.exceptions import PipelineError
+from decision_studio.graph.anchoring import anchored_edges, edge_priority
 from decision_studio.graph.belief_propagation import propagate_beliefs
 from decision_studio.graph.critical_path import find_critical_path
 from decision_studio.graph.sensitivity import analyze_sensitivity
@@ -33,6 +34,15 @@ from decision_studio.pipeline.dag_builder import DAGBuilder
 from decision_studio.pipeline.discovery import DiscoveryEngine
 from decision_studio.pipeline.evidence_grounder import EvidenceGrounder
 from decision_studio.pipeline.statistical_validator import StatisticalValidator
+from decision_studio.reasoning.decision_anchor import (
+    ORIGIN_FRAME,
+    ROLE_OUTCOME,
+    draft_anchor,
+    normalise_anchor,
+    outcome_claim_text,
+    render_anchor,
+    score_relevance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +165,7 @@ class CausalPipeline:
         self.session = session
         # Kept as well as passed on: stages that call the model directly --
         self.llm = llm_client
+        self.embedder = embedding_service
         self.claim_extractor = ClaimExtractor(llm_client, embedding_service)
         self.causal_inferrer = CausalInferrer(llm_client)
         self.bias_auditor = BiasAuditor(llm_client)
@@ -226,6 +237,11 @@ class CausalPipeline:
                 "order_index": c.order_index,
                 "source_sentence": c.source_sentence or "",
                 "layer": c.layer,
+                "origin": c.origin,
+                "decision_role": c.decision_role,
+                "relevance": c.relevance,
+                "bears_on": c.bears_on,
+                "metadata": c.metadata_,
             })
             claim_db_ids.append(c.id)
 
@@ -323,6 +339,13 @@ class CausalPipeline:
                 project_id, checkpoint,
             )
 
+        anchor = await self._resolve_anchor(project, text)
+        # The anchor reaches inference as well as extraction: the judge deciding
+        # whether a claim drives an outcome needs to know what the outcome is for.
+        inference_context = "\n".join(
+            part for part in (render_anchor(anchor), extra_context) if part
+        ) or None
+
         try:
             # ==================================================================
             # Layer 0: Seed
@@ -351,7 +374,7 @@ class CausalPipeline:
 
                 # Phase A: LLM extraction — fast, no embedding yet
                 claims, has_temporal = await self.claim_extractor.extract(
-                    text, extra_context=extra_context
+                    text, extra_context=extra_context, anchor=anchor
                 )
 
                 if project is not None:
@@ -403,6 +426,20 @@ class CausalPipeline:
                     claim_db_ids[c["order_index"]] for c in claims
                 ]
 
+                # Outcome nodes join after dedup, so an extracted claim that
+                # restates a success criterion is never merged into one.
+                # order_index is sparse after dedup; start past the highest.
+                outcome_claims = await self._outcome_claims(
+                    anchor,
+                    max((c.get("order_index", 0) for c in claims), default=-1) + 1,
+                )
+                if outcome_claims:
+                    claim_db_ids.extend(
+                        await self._save_claims(project_uuid, outcome_claims)
+                    )
+                    claims.extend(outcome_claims)
+                    await self.session.commit()
+
                 await self._save_checkpoint(project_uuid, STAGE_CLAIM_EXTRACTION)
                 await self.session.commit()
 
@@ -444,7 +481,7 @@ class CausalPipeline:
                 )
 
                 edges = await self.causal_inferrer.infer(
-                    claims, extra_context=extra_context
+                    claims, extra_context=inference_context
                 )
 
                 await self._emit(
@@ -653,7 +690,24 @@ class CausalPipeline:
                     event_callback,
                 )
 
-                new_claims = await self.discovery_engine.discover(claims, edges)
+                # Discovery follows the decision rather than the documents:
+                # only edges on a path to an outcome (or between relevant
+                # claims) are expanded. Everything, without an anchor.
+                expandable = anchored_edges(claims, edges)
+                if len(expandable) < len(edges):
+                    logger.info(
+                        "Discovery layer %d: expanding %d of %d edge(s) that bear "
+                        "on the decision", layer, len(expandable), len(edges),
+                    )
+                new_claims = await self.discovery_engine.discover(claims, expandable)
+
+                if anchor and new_claims:
+                    scores = await score_relevance(
+                        self.llm, anchor, [c["text"] for c in new_claims]
+                    )
+                    for claim, score in zip(new_claims, scores):
+                        if score:
+                            claim.update(score)
 
                 if len(new_claims) < 1:
                     logger.info("Discovery layer %d: no new claims, converging", layer)
@@ -669,9 +723,15 @@ class CausalPipeline:
 
                 # Cap claims per layer to prevent combinatorial explosion
                 if len(new_claims) > _MAX_CLAIMS_PER_LAYER:
-                    # Keep highest-confidence claims
+                    # Keep the most relevant, then the most confident. Unscored
+                    # claims all rank equal on relevance, which reduces to the
+                    # old confidence ordering.
                     new_claims.sort(
-                        key=lambda c: c.get("confidence", 0.5), reverse=True
+                        key=lambda c: (
+                            c.get("relevance") if c.get("relevance") is not None else 0.0,
+                            c.get("confidence", 0.5),
+                        ),
+                        reverse=True,
                     )
                     new_claims = new_claims[:_MAX_CLAIMS_PER_LAYER]
                     logger.info(
@@ -721,14 +781,14 @@ class CausalPipeline:
                 )
 
                 new_edges = await self.causal_inferrer.infer_incremental(
-                    claims, new_indices, extra_context=extra_context
+                    claims, new_indices, extra_context=inference_context
                 )
 
                 # Enforce global edge budget: total edges ≤ claims × 2
                 max_total_edges = max(10, len(claims) * 2)
                 edge_room = max(0, max_total_edges - len(edges))
                 if len(new_edges) > edge_room:
-                    new_edges.sort(key=lambda e: e.get("strength", 0), reverse=True)
+                    new_edges.sort(key=lambda e: edge_priority(e, claims), reverse=True)
                     new_edges = new_edges[:edge_room]
                     logger.info(
                         "Discovery L%d: pruned incremental edges to %d (budget: %d total)",
@@ -944,6 +1004,70 @@ class CausalPipeline:
             )
             raise PipelineError(f"Pipeline failed: {exc}") from exc
 
+    async def _resolve_anchor(
+        self, project: Project | None, text: str
+    ) -> dict[str, Any] | None:
+        """The decision anchor for this run, drafting one when only an objective exists.
+
+        Drafted here as well as on the intake screen, so a run that skipped the
+        screen — the intake switch, ``/analyze``, a resumed run — is anchored
+        the same way. Without a stated objective there is no anchor, and the
+        run is exactly the one it was before anchors existed.
+        """
+        if project is None:
+            return None
+        anchor = normalise_anchor(getattr(project, "decision_anchor", None))
+        if anchor is not None:
+            return anchor
+        anchor = await draft_anchor(self.llm, project.decision_objective, text)
+        if anchor is not None:
+            project.decision_anchor = anchor
+            await self.session.commit()
+            logger.info(
+                "Drafted a decision anchor for project %s: %d option(s), %d outcome(s)",
+                project.id, len(anchor["options"]), len(anchor["outcomes"]),
+            )
+        return anchor
+
+    async def _outcome_claims(
+        self, anchor: dict[str, Any] | None, start_index: int
+    ) -> list[dict[str, Any]]:
+        """One claim per anchor outcome: the destinations causal inference aims at.
+
+        A prior of 0.5 because nothing is known yet about whether success will
+        be reached — that is what the graph is for. Embedded because the
+        inferrer computes similarities for every node, though outcomes bypass
+        its similarity filter.
+        """
+        outcomes = (anchor or {}).get("outcomes") or []
+        if not outcomes:
+            return []
+        texts = [outcome_claim_text(o) for o in outcomes]
+        try:
+            embeddings = await self.embedder.embed_batch(texts)
+        except Exception as exc:
+            raise PipelineError(f"Failed to embed outcome nodes: {exc}") from exc
+        return [
+            {
+                "text": text,
+                "type": "PREDICTION",
+                "confidence": 0.5,
+                "prior": 0.5,
+                "source_interest": "disinterested",
+                "source_role": "the decision anchor",
+                "source_sentence": "",
+                "embedding": embedding,
+                "order_index": start_index + i,
+                "layer": 0,
+                "origin": ORIGIN_FRAME,
+                "decision_role": ROLE_OUTCOME,
+                "relevance": 1.0,
+                "bears_on": [outcome["key"]],
+                "metadata": {"anchor_key": outcome["key"]},
+            }
+            for i, (outcome, text, embedding) in enumerate(zip(outcomes, texts, embeddings))
+        ]
+
     async def _emit(
         self,
         event: PipelineEvent,
@@ -1006,6 +1130,12 @@ class CausalPipeline:
                 source_sentence=claim_data.get("source_sentence"),
                 order_index=claim_data.get("order_index", 0),
                 layer=claim_data.get("layer", 0),
+                origin=claim_data.get("origin", "ai"),
+                decision_role=claim_data.get("decision_role"),
+                relevance=claim_data.get("relevance"),
+                relevance_reason=claim_data.get("relevance_reason"),
+                bears_on=claim_data.get("bears_on"),
+                metadata_=claim_data.get("metadata"),
             )
             self.session.add(claim)
             claim_ids.append(claim_id)

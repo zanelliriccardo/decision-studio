@@ -65,3 +65,7 @@ class IntakeStartRequest(BaseModel):
     """Answers, then start. An empty list means "start without answering"."""
 
     answers: list[IntakeAnswer] = Field(default_factory=list)
+    #: The decision anchor as the user left it on the intake screen. Absent
+    #: when they did not touch it — the pipeline then uses the stored draft, or
+    #: drafts one itself.
+    decision_anchor: dict | None = None

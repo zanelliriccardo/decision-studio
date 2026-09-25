@@ -63,6 +63,12 @@ class Project(Base):
         comment="What decision the user is trying to make. Steers theory and "
                 "theory generation.",
     )
+    decision_anchor: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True,
+        comment="The decision in a form the pipeline can steer by: decision, "
+                "options, outcomes, deadline, constraints and whether the user "
+                "confirmed it. See reasoning/decision_anchor.py.",
+    )
 
     # Relationships
     claims: Mapped[list["Claim"]] = relationship(
@@ -146,9 +152,10 @@ class Claim(Base):
     )
     origin: Mapped[str] = mapped_column(
         String(10), default="ai", server_default="ai",
-        comment="ai or user. A user-authored claim is not blind re-scored: that "
-                "pass exists to correct a model scoring its own proposal, and a "
-                "human's own judgement is authoritative here by design.",
+        comment="ai, user or frame. A user-authored claim is not blind re-scored: "
+                "that pass exists to correct a model scoring its own proposal, and "
+                "a human's own judgement is authoritative here by design. 'frame' "
+                "marks an outcome node created from the decision anchor.",
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true",
@@ -158,6 +165,24 @@ class Claim(Base):
     user_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+    # --- Relation to the decision (see reasoning/decision_anchor.py) ---
+    # Scores, never filters. All null when the project has no anchor.
+    decision_role: Mapped[str | None] = mapped_column(
+        String(20), nullable=True,
+        comment="lever, contingency, mechanism, outcome or background. "
+                "'outcome' with origin 'frame' marks an anchor node.",
+    )
+    relevance: Mapped[float | None] = mapped_column(
+        Float, nullable=True,
+        comment="0-1, how directly this claim bears on the decision, as judged "
+                "by the model. Structural relevance is computed from the graph.",
+    )
+    relevance_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bears_on: Mapped[list | None] = mapped_column(
+        JSON, nullable=True,
+        comment="Anchor keys this claim affects, e.g. ['O1', 'Y2'].",
     )
 
     # Relationships

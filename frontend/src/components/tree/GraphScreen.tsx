@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useState, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Search, Filter, Download, Loader2, GitFork, Wifi, WifiOff, Eye, Focus as FocusIcon, ChevronLeft, ChevronRight, Check, Undo2, Info, Shield, Clock, Sparkles, GitCompare, Spline, PlusCircle, FileText, FileDown } from 'lucide-react'
+import { Search, Filter, Download, Loader2, GitFork, Wifi, WifiOff, Eye, Focus as FocusIcon, ChevronLeft, ChevronRight, Check, Undo2, Info, Shield, Clock, Sparkles, GitCompare, Spline, PlusCircle, FileText, FileDown, Target, Radar } from 'lucide-react'
 import { toast } from 'sonner'
 import { apiGet } from '../../lib/api/client.ts'
 import { useAnalysis } from '../../context/AnalysisContext.tsx'
@@ -31,6 +31,7 @@ import Slider from '../ui/Slider.tsx'
 import { computeCumulativeTime } from '../../lib/graphUtils.ts'
 import { computeVisibleNodes, findTopPaths } from '../../lib/graph/focusCompute.ts'
 import { useTemporalBeliefs } from '../../hooks/useTemporalBeliefs.ts'
+import { anchorNodeFields, applyDecisionLens, isAnchored, toAnchor } from '../../lib/decisionAnchor.ts'
 
 // --- Snake_case API response types ---
 
@@ -54,6 +55,15 @@ interface ApiNode {
   prior?: number
   corroborated_by?: string[] | null
   duplicate_count?: number
+  origin?: string
+  decision_role?: string | null
+  relevance?: number | null
+  relevance_reason?: string | null
+  bears_on?: string[] | null
+  anchor_distance?: number | null
+  effective_relevance?: number | null
+  is_peripheral?: boolean
+  in_lens?: boolean
 }
 
 interface ApiEvidence {
@@ -110,6 +120,7 @@ interface ApiGraph {
   has_temporal?: boolean
   graph_revision?: number
   decision_objective?: string | null
+  decision_anchor?: unknown
 }
 
 // --- Transform helpers ---
@@ -149,6 +160,7 @@ function transformNode(api: ApiNode): CausalNode {
     prior: api.prior ?? api.confidence,
     corroboratedBy: api.corroborated_by ?? null,
     duplicateCount: api.duplicate_count ?? 0,
+    ...anchorNodeFields(api as unknown as Record<string, unknown>),
   }
 }
 
@@ -195,8 +207,11 @@ function transformGraph(api: ApiGraph): CausalGraph {
     hasTemporal: api.has_temporal ?? true,
     graphRevision: api.graph_revision ?? 1,
     decisionObjective: api.decision_objective ?? null,
+    decisionAnchor: toAnchor(api.decision_anchor),
   }
 }
+
+const LENS_STORAGE_KEY = 'decision_studio-decision-lens'
 
 // --- Side panel type ---
 
@@ -231,6 +246,41 @@ export default function GraphScreen() {
   const reasoning = useReasoning(projectId ?? null)
   const [showTimeScrubber, setShowTimeScrubber] = useState(false)
   const [timeFilter, setTimeFilter] = useState<number | null>(null)
+
+  // The decision lens: on by default, remembered per browser. A view, never a
+  // filter — the claims browser still lists everything, and "show everything"
+  // is one click away.
+  const [lensOn, setLensOn] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(LENS_STORAGE_KEY) !== 'off'
+    } catch {
+      return true
+    }
+  })
+  const [showPeripheral, setShowPeripheral] = useState(false)
+  const toggleLens = useCallback(() => {
+    setLensOn((prev) => {
+      try {
+        localStorage.setItem(LENS_STORAGE_KEY, prev ? 'off' : 'on')
+      } catch {
+        // Unavailable storage only means the choice is not remembered.
+      }
+      return !prev
+    })
+  }, [])
+  const anchored = useMemo(() => (graph ? isAnchored(graph) : false), [graph])
+  // Panorama only. Focus mode shows a chosen subgraph — a theory's chain, a
+  // comparison — and hiding part of it because it sits far from an outcome
+  // would draw a broken chain.
+  const lensActive = anchored && lensOn && viewMode === 'panorama'
+  const displayGraph = useMemo(
+    () => (graph && lensActive ? applyDecisionLens(graph) : graph),
+    [graph, lensActive],
+  )
+  const peripheralNodes = useMemo(
+    () => (graph ? graph.nodes.filter((n) => n.isPeripheral && n.isActive !== false) : []),
+    [graph],
+  )
 
   // Memoized cumulative time computation
   const cumulativeTime = useMemo(
@@ -784,6 +834,78 @@ export default function GraphScreen() {
           </button>
         )}
 
+        {/* Decision lens — only when the graph is anchored to a decision */}
+        {anchored && viewMode === 'panorama' && (
+          <button
+            onClick={toggleLens}
+            aria-pressed={lensOn}
+            title={t.anchor.lensHint}
+            data-testid="decision-lens-toggle"
+            className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded-lg border transition-colors ${
+              lensOn
+                ? 'text-amber-300 bg-amber-500/15 border-amber-500/30'
+                : 'text-text-muted hover:text-text-secondary bg-surface-700 hover:bg-surface-600 border-surface-600'
+            }`}
+          >
+            <Target className="w-3 h-3" aria-hidden="true" />
+            <span className="hidden md:inline">
+              {lensOn
+                ? t.anchor.lensOn
+                    .replace('{shown}', String(displayGraph?.nodes.length ?? 0))
+                    .replace('{total}', String(graph.nodes.length))
+                : t.anchor.lensOff}
+            </span>
+          </button>
+        )}
+
+        {/* Peripheral but connected: read as background, linked to an outcome */}
+        {anchored && peripheralNodes.length > 0 && (
+          <div className="relative">
+            <button
+              onClick={() => setShowPeripheral((prev) => !prev)}
+              aria-expanded={showPeripheral}
+              title={t.anchor.peripheralHint}
+              data-testid="peripheral-toggle"
+              className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded-lg border transition-colors ${
+                showPeripheral
+                  ? 'text-violet-300 bg-violet-500/15 border-violet-500/30'
+                  : 'text-text-muted hover:text-text-secondary bg-surface-700 hover:bg-surface-600 border-surface-600'
+              }`}
+            >
+              <Radar className="w-3 h-3" aria-hidden="true" />
+              <span className="hidden md:inline">
+                {t.anchor.peripheral.replace('{n}', String(peripheralNodes.length))}
+              </span>
+            </button>
+            {showPeripheral && (
+              <div
+                className="absolute left-0 top-full mt-1 z-30 w-80 max-h-80 overflow-y-auto rounded-lg border border-surface-600 bg-surface-800 shadow-xl p-2 space-y-1"
+                data-testid="peripheral-tray"
+              >
+                <p className="text-[11px] text-text-muted px-1 pb-1 leading-relaxed">
+                  {t.anchor.peripheralHint}
+                </p>
+                {peripheralNodes.map((node) => (
+                  <button
+                    key={node.id}
+                    onClick={() => {
+                      handleNodeClick(node.id)
+                      setShowPeripheral(false)
+                    }}
+                    className="w-full text-left px-2 py-1.5 rounded-md hover:bg-surface-700 transition-colors"
+                  >
+                    <span className="block text-xs text-text-primary line-clamp-2">{node.text}</span>
+                    <span className="block text-[10px] text-text-muted mt-0.5">
+                      {t.anchor.hops.replace('{n}', String(node.anchorDistance ?? '?'))}
+                      {node.relevanceReason ? ` · ${node.relevanceReason}` : ''}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* WebSocket status indicator */}
         <div className="flex items-center gap-1" title={connected ? t.graph.connected : t.graph.disconnected}>
           {connected ? (
@@ -942,7 +1064,7 @@ export default function GraphScreen() {
             />
           ) : (
             <ForceGraph
-              graph={graph}
+              graph={displayGraph ?? graph}
               onNodeClick={handleNodeClick}
               onEdgeClick={handleEdgeClick}
               onEdgeStrengthChange={handleEdgeStrengthChange}
