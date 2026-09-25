@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: decision_studio
+      POSTGRES_PASSWORD: decision_studio
+      POSTGRES_DB: decision_studio
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U decision_studio -d decision_studio"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    # The image now bundles the frontend, so this serves the whole app on :8000.
+    # For frontend development run `npm run dev` instead: it proxies /api here
+    # and gives hot reload.
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - ./decision_studio:/app/decision_studio
+
+volumes:
+  pgdata:

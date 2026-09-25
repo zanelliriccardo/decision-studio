@@ -1,0 +1,62 @@
+[project]
+name = "decision_studio"
+version = "0.1.0"
+description = "Decision Studio — Causal Reasoning Engine for Evidence-Based Decisions"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]",
+    "uvicorn[standard]",
+    "sqlalchemy[asyncio]",
+    "asyncpg",
+    "alembic",
+    "pgvector",
+    "networkx",
+    "numpy",
+    "reportlab",
+    "scipy",
+    "openai",
+    "anthropic",
+    "httpx",
+    "sse-starlette",
+    "websockets",
+    "pydantic-settings",
+    "tenacity",
+    "python-dotenv",
+    "python-multipart",
+    "pypdf",
+    "ddgs",
+]
+
+[project.optional-dependencies]
+# Local NLI scoring of retrieved evidence. Around 2 GB, and the pipeline
+# degrades without it rather than failing: nli_scorer catches the missing
+# import and returns neutral scores. Worth installing before running a real
+# analysis; not worth waiting for on a first run.
+nli = [
+    "torch",
+    "transformers",
+]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "httpx",
+    "factory-boy",
+]
+
+[tool.setuptools.packages.find]
+include = ["decision_studio*"]
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+# Database-backed tests read TEST_DATABASE_URL (default:
+# postgresql+asyncpg://decision_studio:decision_studio@localhost:5432/decision_studio_test).
+# They skip when no database is reachable; pure-logic tests always run.
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
