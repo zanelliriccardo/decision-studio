@@ -42,13 +42,24 @@ from uuid import UUID
 import networkx as nx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from decision_studio.graph.stability import DEFAULT_RUNS, compare_options
+from decision_studio.graph.option_sensitivity import (
+    FLIPS,
+    DriverImpact,
+    perturbation_drivers,
+    rank_drivers,
+)
+from decision_studio.graph.stability import DEFAULT_RUNS, WEIGHTED, compare_options
+from decision_studio.graph.value_of_information import link_uncertainty
+from decision_studio.reasoning import decision_priorities, decision_robustness
 from decision_studio.reasoning.decision_anchor import ORIGIN_FRAME, ROLE_OUTCOME, project_anchor
 from decision_studio.reasoning.effective_graph import load_effective_snapshot
 
 logger = logging.getLogger(__name__)
 
 ROLE_LEVER = "lever"
+
+#: Drivers shown per comparison. The full ranking feeds information priority.
+MAX_DRIVERS = 5
 
 
 @dataclass
@@ -64,6 +75,8 @@ class OptionRow:
     outcomes: dict[str, dict[str, float]] = field(default_factory=dict)
     score: float | None = None
     p_best: float | None = None
+    #: The weighted view under the decider's priorities (decision_priorities.py).
+    weighted: decision_priorities.WeightedView | None = None
 
     @property
     def status(self) -> str:
@@ -86,6 +99,17 @@ class OptionComparison:
     runs: int = 0
     #: Why the comparison could not be made, when it could not.
     unavailable: str | None = None
+    #: Every success criterion with the importance the decider gave it.
+    priorities: list[decision_priorities.Priority] = field(default_factory=list)
+    #: Pairwise robustness, one entry per pair of options.
+    robustness: list[dict[str, Any]] = field(default_factory=list)
+    #: The two options with the highest weighted view: what the drivers explain.
+    headline_pair: tuple[str, str] | None = None
+    #: Inputs ranked by effect on the headline pair (all of them; MAX_DRIVERS shown).
+    driver_impacts: list[DriverImpact] = field(default_factory=list)
+    drivers: list[dict[str, Any]] = field(default_factory=list)
+    #: Filled by reasoning/information_priority.py.
+    information_priority: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -97,6 +121,7 @@ class OptionComparison:
                     "levers_off": [{"claim_id": c, "text": t} for c, t in o.levers_off],
                     "reaches_outcome": o.reaches_outcome,
                     "outcomes": o.outcomes, "score": o.score, "p_best": o.p_best,
+                    "weighted": o.weighted.as_dict() if o.weighted else None,
                 }
                 for o in self.options
             ],
@@ -104,6 +129,11 @@ class OptionComparison:
             "leader": self.leader,
             "runs": self.runs,
             "unavailable": self.unavailable,
+            "priorities": [p.as_dict() for p in self.priorities],
+            "robustness": self.robustness,
+            "headline_pair": list(self.headline_pair) if self.headline_pair else None,
+            "drivers": self.drivers,
+            "information_priority": self.information_priority,
         }
 
 
@@ -148,8 +178,14 @@ def build_comparison(
     anchor: dict[str, Any] | None,
     *,
     runs: int = DEFAULT_RUNS,
+    priorities: dict[str, str] | None = None,
 ) -> OptionComparison:
-    """The comparison, from a propagation-ready graph and the reviewed claims."""
+    """The comparison, from a propagation-ready graph and the reviewed claims.
+
+    Args:
+        priorities: outcome key -> importance, as the decider set them. Missing
+            criteria take the default (decision_priorities.DEFAULT_IMPORTANCE).
+    """
     options = list((anchor or {}).get("options", []))
     outcome_labels = {o["key"]: o["label"] for o in (anchor or {}).get("outcomes", [])}
 
@@ -169,6 +205,7 @@ def build_comparison(
     comparison = OptionComparison(
         options=[OptionRow(key=o["key"], label=o["label"]) for o in options],
         outcomes=outcomes,
+        priorities=decision_priorities.resolve(outcomes, priorities),
     )
     if len(options) < 2:
         comparison.unavailable = "Fewer than two options are on the table."
@@ -200,7 +237,11 @@ def build_comparison(
         )
         return comparison
 
-    forecasts, decisive = compare_options(graphs, list(outcome_nodes.values()), runs=runs)
+    weights_by_key = decision_priorities.normalized_weights(comparison.priorities)
+    weights_by_node = {outcome_nodes[k]: w for k, w in weights_by_key.items()}
+    forecasts, decisive = compare_options(
+        graphs, list(outcome_nodes.values()), runs=runs, weights=weights_by_node or None,
+    )
     node_to_key = {node: key for key, node in outcome_nodes.items()}
     for key, forecast in forecasts.items():
         row = by_key[key]
@@ -214,11 +255,160 @@ def build_comparison(
                 "p90": round(stats.p90, 4),
                 "p_best": round(forecast.p_best_by_outcome.get(node, 0.0), 3),
             }
+        row.weighted = decision_priorities.weighted_view(
+            {k: v["point"] for k, v in row.outcomes.items()}, weights_by_key
+        )
     comparison.runs = runs
-    comparison.decisive = decisive
-    leader = max(comparison.options, key=lambda r: r.p_best or 0.0)
-    comparison.leader = leader.key if decisive else None
+    if weights_by_key:
+        comparison.decisive = decisive
+        leader = max(comparison.options, key=lambda r: (r.p_best or 0.0, r.key))
+        comparison.leader = leader.key if decisive else None
+    # With every criterion set to "none" there is no weighted view, and the
+    # equal-weight ranking compare_options falls back to would be a hidden score.
+
+    comparison.robustness = _robustness(comparison, forecasts, outcome_nodes)
+    _explain_drivers(comparison, graph, graphs, outcome_nodes, weights_by_key, claims)
     return comparison
+
+
+def _robustness(comparison: OptionComparison, forecasts: dict, outcome_nodes: dict[str, str]) -> list[dict[str, Any]]:
+    """Every pair of options, per criterion and on the weighted view."""
+    labels = {row.key: row.label for row in comparison.options}
+    by_key = {row.key: row for row in comparison.options}
+    keys = [row.key for row in comparison.options]
+    pairs: list[dict[str, Any]] = []
+    for i, a in enumerate(keys):
+        for b in keys[i + 1:]:
+            shares = forecasts[a].higher_than.get(b, {})
+            rows = []
+            verdicts = []
+            for key, label in comparison.outcomes:
+                value_a = by_key[a].outcomes[key]["point"]
+                value_b = by_key[b].outcomes[key]["point"]
+                verdict = decision_robustness.classify(
+                    a, b, value_a, value_b, shares.get(outcome_nodes[key], 0.5))
+                verdicts.append(verdict)
+                rows.append({
+                    "key": key, "label": label, "value_a": value_a, "value_b": value_b,
+                    **verdict.as_dict(),
+                    "sentence": decision_robustness.describe(verdict, f"{key} {label}", labels),
+                })
+            weighted = None
+            if by_key[a].weighted and by_key[b].weighted:
+                verdict = decision_robustness.classify(
+                    a, b, by_key[a].weighted.score, by_key[b].weighted.score,
+                    shares.get(WEIGHTED, 0.5))
+                weighted = {
+                    "value_a": round(by_key[a].weighted.score, 4),
+                    "value_b": round(by_key[b].weighted.score, 4),
+                    **verdict.as_dict(),
+                    "sentence": decision_robustness.describe(
+                        verdict, "the weighted view", labels),
+                }
+            pairs.append({
+                "a": a, "b": b, "outcomes": rows, "weighted": weighted,
+                "summary": decision_robustness.summarise_pair(a, b, verdicts),
+            })
+    return pairs
+
+
+def _pct(value: float) -> str:
+    return f"{round(value * 100)}%"
+
+
+def _gap_phrase(gap: float, a: str, b: str, labels: dict[str, str]) -> str:
+    if abs(gap) < 0.005:
+        return "the two are level"
+    leader = a if gap > 0 else b
+    return f"{labels[leader]} higher by {abs(gap) * 100:.0f} points"
+
+
+def _explain_drivers(
+    comparison: OptionComparison,
+    graph: nx.DiGraph,
+    graphs: dict[str, nx.DiGraph],
+    outcome_nodes: dict[str, str],
+    weights_by_key: dict[str, float],
+    claims: list[Any],
+) -> None:
+    """Rank the inputs behind the gap between the two leading options."""
+    ranked_rows = sorted(
+        comparison.options,
+        key=lambda r: (-(r.weighted.score if r.weighted else (r.score or 0.0)), r.key),
+    )
+    a, b = ranked_rows[0].key, ranked_rows[1].key
+    comparison.headline_pair = (a, b)
+    fixed = {cid for row in comparison.options for cid, _ in row.levers_on + row.levers_off}
+    base, drivers = perturbation_drivers(graphs, list(outcome_nodes.values()), fixed_nodes=fixed)
+    weights_by_node = (
+        {outcome_nodes[k]: w for k, w in weights_by_key.items()}
+        or {n: 1.0 for n in outcome_nodes.values()}
+    )
+    comparison.driver_impacts = rank_drivers(base, drivers, a, b, weights_by_node)
+
+    text = {str(c.id): c.text for c in claims}
+    labels = {row.key: row.label for row in comparison.options}
+    node_to_key = {node: key for key, node in outcome_nodes.items()}
+    comparison.drivers = [
+        describe_driver(impact, graph, text, labels, a, b, node_to_key)
+        for impact in comparison.driver_impacts[:MAX_DRIVERS]
+    ]
+
+
+def driver_uncertainty(impact: DriverImpact, graph: nx.DiGraph) -> float:
+    """How little is known about the input, 0-1 (value_of_information.link_uncertainty)."""
+    driver = impact.driver
+    if driver.kind == "link" and graph.has_edge(driver.source, driver.target):
+        data = graph.edges[driver.source, driver.target]
+        return link_uncertainty(data.get("link_confidence"), data.get("evidence_score"))
+    # A claim's prior: most uncertain at 50%, least at 0% or 100%.
+    return round(4 * driver.current * (1 - driver.current), 4)
+
+
+def describe_driver(
+    impact: DriverImpact,
+    graph: nx.DiGraph,
+    text: dict[str, str],
+    labels: dict[str, str],
+    a: str,
+    b: str,
+    node_to_key: dict[str, str],
+) -> dict[str, Any]:
+    """One driver for the API and the report, with a sentence that explains it."""
+    driver = impact.driver
+    if driver.kind == "link":
+        label = f"{text.get(driver.source, '?')} → {text.get(driver.target, '?')}"
+        what = "Link strength"
+        edge_id = graph.edges[driver.source, driver.target].get("edge_id") if graph.has_edge(
+            driver.source, driver.target) else None
+    else:
+        label = text.get(driver.key, "?")
+        what = "Likelihood this holds"
+        edge_id = None
+    flips = [node_to_key.get(n, n) for n, status in impact.outcome_flips.items() if status == FLIPS]
+    explanation = (
+        f"{what}: {_pct(driver.current)} now, plausible range {_pct(driver.low)}–{_pct(driver.high)}. "
+        f"At the low end, {_gap_phrase(impact.low_gap, a, b, labels)} on the weighted view; "
+        f"at the high end, {_gap_phrase(impact.high_gap, a, b, labels)}."
+    )
+    if impact.flip == FLIPS:
+        explanation += " Within its plausible range this input can reverse the comparison."
+    elif impact.flip == "erases":
+        explanation += " Within its plausible range this input can close the gap."
+    return {
+        "kind": driver.kind,
+        "key": driver.key,
+        "edge_id": edge_id,
+        "claim_id": driver.key if driver.kind == "claim" else None,
+        "label": label,
+        "current": round(driver.current, 4),
+        "low": round(driver.low, 4),
+        "high": round(driver.high, 4),
+        "uncertainty": driver_uncertainty(impact, graph),
+        **impact.as_dict(),
+        "flips_outcomes": flips,
+        "explanation": explanation,
+    }
 
 
 async def compare_project_options(
@@ -227,9 +417,17 @@ async def compare_project_options(
     """What the reviewed graph predicts for each option of the project's decision."""
     from decision_studio.reasoning.link_tests import snapshot_graph
 
+    from decision_studio.reasoning.information_priority import attach_information_priority
+
     anchor = await project_anchor(session, project_id)
     snapshot = await load_effective_snapshot(project_id, session)
-    comparison = build_comparison(snapshot_graph(snapshot), snapshot.claims, anchor, runs=runs)
+    graph = snapshot_graph(snapshot)
+    comparison = build_comparison(
+        graph, snapshot.claims, anchor, runs=runs,
+        priorities=decision_priorities.clean_priorities(
+            getattr(snapshot.project, "outcome_priorities", None)),
+    )
+    await attach_information_priority(session, project_id, comparison, graph, snapshot.claims)
     logger.info(
         "Option comparison for %s: %d option(s), decisive=%s, %s",
         project_id, len(comparison.options), comparison.decisive,

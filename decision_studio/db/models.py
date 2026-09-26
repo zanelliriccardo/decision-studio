@@ -68,6 +68,12 @@ class Project(Base):
         comment="The decider's own account of comparable past decisions and how "
                 "they went. Base rates are read from it (reference_case).",
     )
+    outcome_priorities: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True,
+        comment="Outcome key (Y1..) -> importance (critical, high, medium, low, none): "
+                "how much each success criterion matters to the decider. See "
+                "reasoning/decision_priorities.py. Never changes the graph.",
+    )
     decision_anchor: Mapped[dict | None] = mapped_column(
         JSON, nullable=True,
         comment="The decision in a form the pipeline can steer by: decision, "

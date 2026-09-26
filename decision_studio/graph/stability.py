@@ -379,6 +379,9 @@ class OptionForecast:
     p_best: float
     #: Per outcome node: share of runs in which this option was best on it.
     p_best_by_outcome: dict[str, float] = field(default_factory=dict)
+    #: Other option id -> {outcome node or WEIGHTED: share of runs in which this
+    #: option was higher than that one}. Ties count half.
+    higher_than: dict[str, dict[str, float]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         """This result, for the API."""
@@ -394,6 +397,9 @@ class OptionForecast:
 #: A leader that wins fewer runs than this is not a finding.
 DECISIVE_SHARE = 0.60
 
+#: Key under which ``higher_than`` holds the comparison of the overall score.
+WEIGHTED = "__weighted__"
+
 
 def _winners(scores: dict[str, float]) -> list[str]:
     best = max(scores.values())
@@ -407,6 +413,7 @@ def compare_options(
     runs: int = DEFAULT_RUNS,
     sigma: float = DEFAULT_SIGMA,
     seed: int = DEFAULT_SEED,
+    weights: dict[str, float] | None = None,
 ) -> tuple[dict[str, OptionForecast], bool]:
     """Compare options by what the graph predicts for the success criteria.
 
@@ -415,6 +422,9 @@ def compare_options(
             on its levers, see reasoning/option_comparison.py).
         outcome_nodes: success criteria. Higher belief is better.
         runs: simulations.
+        weights: outcome node -> weight for the overall score (the decider's
+            priorities, reasoning/decision_priorities.py). Equal when omitted.
+            Nodes with no or zero weight do not enter the overall score.
 
     Returns:
         ``(per_option, decisive)``. ``decisive`` is False when the leader is
@@ -444,12 +454,29 @@ def compare_options(
     # the edges that distinguish them.
     shared_edges: set[tuple[str, str]] = set()
     for key in all_edges:
-        weights = {round(c.edges[key][0], 9) for c in all_compiled if key in c.edges}
-        if all(key in c.edges for c in all_compiled) and len(weights) == 1:
+        edge_weights = {round(c.edges[key][0], 9) for c in all_compiled if key in c.edges}
+        if all(key in c.edges for c in all_compiled) and len(edge_weights) == 1:
             shared_edges.add(key)
 
+    if weights and sum(w for n, w in weights.items() if n in outcome_nodes and w > 0) > 0:
+        weight_of = {n: max(0.0, weights.get(n, 0.0)) for n in outcome_nodes}
+    else:
+        weight_of = {n: 1.0 for n in outcome_nodes}
+    weight_total = sum(weight_of.values())
+
     def mean_outcome(beliefs: dict[str, float]) -> float:
-        return sum(beliefs.get(n, 0.0) for n in outcome_nodes) / len(outcome_nodes)
+        return sum(beliefs.get(n, 0.0) * weight_of[n] for n in outcome_nodes) / weight_total
+
+    pairs = [(a, b) for a in options for b in options if a != b]
+    higher: dict[tuple[str, str], dict[str, float]] = {
+        pair: {key: 0.0 for key in [*outcome_nodes, WEIGHTED]} for pair in pairs
+    }
+
+    def tally(pair: tuple[str, str], key: str, value_a: float, value_b: float) -> None:
+        if value_a > value_b + TIE_EPSILON:
+            higher[pair][key] += 1.0
+        elif abs(value_a - value_b) <= TIE_EPSILON:
+            higher[pair][key] += 0.5
 
     points = {oid: propagate_once(c) for oid, c in compiled.items()}
     samples: dict[str, dict[str, list[float]]] = {
@@ -473,9 +500,14 @@ def compare_options(
             for n in outcome_nodes:
                 samples[oid][n].append(run_beliefs[oid].get(n, 0.0))
 
-        winners = _winners({oid: mean_outcome(b) for oid, b in run_beliefs.items()})
+        scores = {oid: mean_outcome(b) for oid, b in run_beliefs.items()}
+        winners = _winners(scores)
         for oid in winners:
             best_overall[oid] += 1.0 / len(winners)
+        for a, b in pairs:
+            tally((a, b), WEIGHTED, scores[a], scores[b])
+            for n in outcome_nodes:
+                tally((a, b), n, run_beliefs[a].get(n, 0.0), run_beliefs[b].get(n, 0.0))
         for n in outcome_nodes:
             winners = _winners({oid: b.get(n, 0.0) for oid, b in run_beliefs.items()})
             for oid in winners:
@@ -500,6 +532,10 @@ def compare_options(
             score=mean_outcome(points[oid]),
             p_best=best_overall[oid] / divisor if runs > 0 else 0.0,
             p_best_by_outcome={n: v / divisor for n, v in best_by_outcome[oid].items()},
+            higher_than={
+                b: {key: count / divisor for key, count in higher[(a, b)].items()}
+                for a, b in pairs if a == oid
+            } if runs > 0 else {},
         )
 
     leader = max(result.values(), key=lambda f: f.p_best)

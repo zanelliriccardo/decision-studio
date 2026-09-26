@@ -104,6 +104,7 @@ def snapshot_graph(snapshot: GraphSnapshot) -> nx.DiGraph:
             ),
             link_confidence=getattr(edge, "link_confidence", None),
             causal_type=getattr(edge, "causal_type", "direct") or "direct",
+            edge_id=str(edge.id),
         )
     return break_cycles(graph)
 

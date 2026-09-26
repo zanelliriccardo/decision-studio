@@ -206,6 +206,87 @@ class OptionForecastResponse(BaseModel):
     outcomes: dict[str, ForecastStats] = {}
     score: float | None = None
     p_best: float | None = None
+    #: The weighted view under the decider's priorities: 0-1, not a probability.
+    weighted: "WeightedViewResponse | None" = None
+
+
+class WeightedViewResponse(BaseModel):
+    score: float
+    #: Outcome key -> normalised weight × option-implied probability.
+    contributions: dict[str, float] = {}
+
+
+class PriorityResponse(BaseModel):
+    key: str
+    label: str
+    importance: Literal["critical", "high", "medium", "low", "none"]
+    weight: float
+    normalized_weight: float
+    is_default: bool
+
+
+class VerdictResponse(BaseModel):
+    #: robust, sensitive, unresolved or no_difference (reasoning/decision_robustness.py)
+    verdict: str
+    higher: str | None = None
+    share: float
+    difference: float
+    value_a: float
+    value_b: float
+    sentence: str
+
+
+class OutcomeVerdictResponse(VerdictResponse):
+    key: str
+    label: str
+
+
+class PairRobustnessResponse(BaseModel):
+    a: str
+    b: str
+    outcomes: list[OutcomeVerdictResponse] = []
+    weighted: VerdictResponse | None = None
+    #: consistent, mixed, unresolved or no_difference
+    summary: str
+
+
+class DriverResponse(BaseModel):
+    kind: Literal["link", "claim"]
+    key: str
+    edge_id: str | None = None
+    claim_id: str | None = None
+    label: str
+    current: float
+    low: float
+    high: float
+    uncertainty: float
+    #: Gap between the headline pair on the weighted view, at central/low/high.
+    base_gap: float
+    low_gap: float
+    high_gap: float
+    impact: float
+    #: flips, erases or no_flip
+    flip: str
+    flips_outcomes: list[str] = []
+    explanation: str
+
+
+class InformationItemResponse(BaseModel):
+    kind: Literal["link", "claim"]
+    key: str
+    edge_id: str | None = None
+    claim_id: str | None = None
+    subject: str
+    action: str
+    how: str | None = None
+    hypothesis_id: str | None = None
+    uncertainty: float
+    uncertainty_band: str
+    impact: float
+    impact_band: str
+    can_flip: bool
+    score: float
+    why: str
 
 
 class OutcomeRef(BaseModel):
@@ -220,6 +301,101 @@ class OptionComparisonResponse(BaseModel):
     leader: str | None = None
     runs: int = 0
     unavailable: str | None = None
+    priorities: list[PriorityResponse] = []
+    robustness: list[PairRobustnessResponse] = []
+    headline_pair: list[str] | None = None
+    drivers: list[DriverResponse] = []
+    information_priority: list[InformationItemResponse] = []
+
+
+class SignalResponse(BaseModel):
+    kind: Literal["tripwire", "link_test", "field_test"]
+    #: The tripwire, link hypothesis or field experiment this comes from.
+    id: str
+    theory_id: str
+    theory_title: str
+    text: str
+    condition: str
+    #: weaken or strengthen, for the option (see reasoning/mind_changers.py)
+    effect: Literal["weaken", "strengthen"]
+    theory_effect: Literal["weaken", "strengthen"]
+    theory_predicts: str
+    decisiveness: Literal["weak", "moderate", "decisive"]
+    likelihood_ratio: float
+    status: str
+    resolved: bool
+    fired: bool | None = None
+    detail: str | None = None
+    score: float
+
+
+class MindTheoryResponse(BaseModel):
+    id: str
+    title: str
+    predicted_effect: str
+    #: The decider's conviction; null until stated. Not an outcome probability.
+    conviction: float | None = None
+    model_support: float | None = None
+    reaches_outcome: bool = False
+    is_stale: bool = False
+
+
+class MindOptionResponse(BaseModel):
+    key: str
+    label: str
+    theories: list[MindTheoryResponse] = []
+    weaken: list[SignalResponse] = []
+    strengthen: list[SignalResponse] = []
+
+
+class MindChangersResponse(BaseModel):
+    options: list[MindOptionResponse] = []
+
+
+@router.get("/graph/{project_id}/what-would-change-my-mind", response_model=MindChangersResponse)
+async def what_would_change_my_mind(
+    project_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> MindChangersResponse:
+    """Per option: the tripwires, link tests and field tests that would weaken or strengthen it."""
+    from decision_studio.reasoning.mind_changers import what_would_change_my_mind as consolidate
+
+    await _require_project(project_id, session)
+    return MindChangersResponse(options=await consolidate(session, project_id))
+
+
+class PrioritiesRequest(BaseModel):
+    """Outcome key -> importance. Keys left out return to the default (medium)."""
+
+    priorities: dict[str, Literal["critical", "high", "medium", "low", "none"]]
+
+
+@router.put("/graph/{project_id}/decision-priorities", response_model=OptionComparisonResponse)
+async def set_decision_priorities(
+    project_id: UUID,
+    req: PrioritiesRequest,
+    session: AsyncSession = Depends(get_session),
+) -> OptionComparisonResponse:
+    """Set how much each success criterion matters, and return the comparison under them.
+
+    Changes nothing in the causal graph: only the weighted view and the
+    robustness and sensitivity of that view move.
+    """
+    from decision_studio.reasoning.decision_anchor import normalise_anchor
+    from decision_studio.reasoning.decision_priorities import clean_priorities
+
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    anchor = normalise_anchor(project.decision_anchor) or {}
+    known = [o["key"] for o in anchor.get("outcomes", [])]
+    unknown = sorted(set(req.priorities) - set(known))
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown success criteria: {', '.join(unknown)}")
+    project.outcome_priorities = clean_priorities(req.priorities, known) or None
+    await session.commit()
+    comparison = await option_comparison.compare_project_options(session, project_id)
+    return OptionComparisonResponse(**comparison.as_dict())
 
 
 @router.get("/graph/{project_id}/options/compare", response_model=OptionComparisonResponse)
