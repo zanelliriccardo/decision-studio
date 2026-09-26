@@ -782,6 +782,11 @@ Supply side changes: Stack Overflow traffic down 55% YoY, junior developer hirin
     wouldCount: 'Would count',
     decisiveness: { weak: 'a little', moderate: 'moderately', decisive: 'decisively' },
     decisivenessHint: 'Say now, before the result is in, how much it should move your conviction. It is locked once the result is recorded, so the weight cannot be chosen to fit it.',
+    dataTest: 'Test with your data',
+    dataTestHint: 'Paste two columns: the cause, then the effect, one row per period or case (at least 8). A header row and a leading date column are fine. A clear relationship the way the link says counts as held; the opposite way, refuted; nothing clear, inconclusive — never refuted, since small tables mostly lack power.',
+    dataTestPlaceholder: 'month, vendor slip (weeks), our slip (weeks)\n2026-01, 0, 1\n2026-02, 2, 2\n…',
+    dataTimeOrdered: 'Rows are in time order (allows a test of direction)',
+    dataRun: 'Test and record',
     waiting: 'waiting for you to state a conviction',
     sources: {
       tripwire: 'Tripwire',

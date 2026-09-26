@@ -331,3 +331,44 @@ async def set_decisiveness(
     await session.commit()
     await session.refresh(row)
     return row
+
+
+async def record_data_result(
+    session: AsyncSession,
+    project_id: UUID,
+    hypothesis_id: UUID,
+    table: str,
+    *,
+    time_ordered: bool = True,
+    event: str | None = None,
+):
+    """Test a link hypothesis against a pasted two-column table, and record the result.
+
+    Returns ``(hypothesis, verdict)``.
+
+    Raises:
+        LookupError: unknown hypothesis.
+        link_data.TableError: the table cannot be read.
+    """
+    from decision_studio.db.models import CausalEdge
+    from decision_studio.reasoning import link_data
+
+    row = (await session.execute(
+        select(LinkHypothesis).where(
+            LinkHypothesis.id == hypothesis_id, LinkHypothesis.project_id == project_id
+        )
+    )).scalars().first()
+    if row is None:
+        raise LookupError(f"Hypothesis {hypothesis_id} not found in project")
+    edge = await session.get(CausalEdge, row.edge_id)
+    cause, effect = link_data.parse_table(table)
+    verdict = link_data.analyse(
+        cause, effect,
+        inhibiting=getattr(edge, "causal_type", "direct") == "inhibiting",
+        time_ordered=time_ordered,
+    )
+    updated = await record_result(
+        session, project_id, hypothesis_id, verdict.result,
+        note=f"From your data: {verdict.summary}", event=event,
+    )
+    return updated, verdict

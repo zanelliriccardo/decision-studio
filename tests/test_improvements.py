@@ -192,3 +192,48 @@ def test_a_stated_conviction_replaces_the_model_score():
     order = sorted([confident, believed, doubted],
                    key=lambda t: rank_key(t, convictions.get(t.title)))
     assert [t.title for t in order] == ["decider says 95%", "model says 90%", "decider says 5%"]
+
+
+# --- Testing a link against the decider's own numbers ---
+
+import numpy as np  # noqa: E402
+
+from decision_studio.reasoning.link_data import TableError, analyse, parse_table  # noqa: E402
+
+
+class TestLinkData:
+    def test_reads_pasted_tables_with_headers_labels_and_decimal_commas(self):
+        text = "month;overtime;attrition\n" + "\n".join(
+            f"2026-{m:02d};{m},5;{m * 2}" for m in range(1, 11)
+        )
+        cause, effect = parse_table(text)
+        assert len(cause) == 10 and cause[0] == 1.5 and effect[-1] == 20
+
+    def test_too_few_rows_is_an_error_not_a_verdict(self):
+        with pytest.raises(TableError):
+            parse_table("a,b\n1,2\n3,4")
+
+    def _series(self, n=40, seed=1):
+        rng = np.random.default_rng(seed)
+        cause = rng.normal(size=n).cumsum()
+        effect = np.concatenate([[0.0], cause[:-1]]) * 0.9 + rng.normal(scale=0.3, size=n)
+        return cause, effect
+
+    def test_a_lagged_effect_holds(self):
+        cause, effect = self._series()
+        assert analyse(cause, effect).result == "held"
+
+    def test_the_wrong_sign_refutes_an_inhibiting_link_as_stated(self):
+        cause, effect = self._series()
+        assert analyse(cause, effect, inhibiting=True, time_ordered=False).result == "refuted"
+
+    def test_noise_is_inconclusive_never_refuted(self):
+        rng = np.random.default_rng(7)
+        verdict = analyse(rng.normal(size=12), rng.normal(size=12), time_ordered=False)
+        assert verdict.result == "inconclusive" and "power" in verdict.summary
+
+    def test_a_backwards_direction_refutes(self):
+        cause, effect = self._series()
+        # Columns swapped: what the link calls the cause is really the follower.
+        verdict = analyse(effect, cause)
+        assert verdict.result == "refuted" and "backwards" in verdict.summary

@@ -23,6 +23,7 @@ import type { Theory } from '../../types/reasoning.ts'
 import ConvictionElicitor from './ConvictionElicitor.tsx'
 import EventField from './EventField.tsx'
 import DecisivenessPicker from './DecisivenessPicker.tsx'
+import DataTestForm from './DataTestForm.tsx'
 
 const pct = (p: number | null | undefined) => (p == null ? '' : `${Math.round(p * 100)}%`)
 
@@ -301,6 +302,21 @@ export default function TheoryValueSection({
                   </div>
                 ) : (
                   <p className="text-[10px] text-text-muted">{t.theoryValue.statuses[h.status]}</p>
+                )}
+                {h.status === 'open' && (
+                  <DataTestForm
+                    projectId={projectId}
+                    hypothesis={h}
+                    event={event}
+                    onRecorded={(updated) => {
+                      setHypotheses((prev) => (prev ?? []).map((x) => (x.id === h.id ? updated : x)))
+                      void refreshConviction()
+                      onChanged?.()
+                    }}
+                  />
+                )}
+                {h.status !== 'open' && h.observedNote && (
+                  <p className="text-[10px] text-text-secondary">{h.observedNote}</p>
                 )}
               </div>
             ))}

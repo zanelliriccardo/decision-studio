@@ -154,3 +154,28 @@ def test_moderate_is_the_old_default():
     assert tripwire_likelihood("falsifies", True, "weak") == pytest.approx(0.5)
     assert result_likelihood("refuted", None) == DEFAULT_RESULT_LR["refuted"]
     assert result_likelihood("held", "decisive") > result_likelihood("held", "weak")
+
+
+async def test_a_link_is_tested_against_pasted_data(session):
+    from decision_studio.api.routes.theory_value import HypothesisDataRequest, record_hypothesis_data
+
+    project, theories = await _anchored_project_with_theories(session)
+    theory = theories[VENDOR]
+    await theory_value.state_prior(session, project.id, theory.theory_key, 0.5)
+    llm = FakeLLM([(LINK_HYPOTHESIS_SYSTEM, lambda u, s: {"hypotheses": [
+        {"index": 0, "statement": "Vendor slips push the date", "refuted_if": "no relation",
+         "cheapest_test": "Compare last year's slips with our dates"},
+    ]})])
+    hypothesis = (await link_tests.propose_hypotheses(session, project.id, theory.id, llm=llm))[0]
+
+    table = "quarter,vendor_slip_weeks,our_slip_weeks\n" + "\n".join(
+        f"Q{i},{w},{w + (i % 2)}" for i, w in enumerate([0, 1, 3, 2, 5, 4, 6, 8, 7, 9], start=1)
+    )
+    response = await record_hypothesis_data(
+        project.id, hypothesis.id, HypothesisDataRequest(table=table, time_ordered=False), session)
+    assert response.result == "held" and response.method == "spearman" and response.n == 10
+    assert response.hypothesis.status == "held"
+    assert response.hypothesis.observed_note.startswith("From your data:")
+    conviction = (await theory_value.convictions(session, project.id, [theory.theory_key]))[
+        str(theory.theory_key)]
+    assert conviction.current == pytest.approx(bayes_update(0.5, [2.0]))

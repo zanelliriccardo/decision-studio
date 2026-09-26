@@ -784,6 +784,11 @@ export const zh: Translations = {
     wouldCount: '影响程度',
     decisiveness: { weak: '较小', moderate: '中等', decisive: '决定性' },
     decisivenessHint: '在结果出来之前说明它应在多大程度上改变你的信念。结果记录后即锁定，避免根据结果调整权重。',
+    dataTest: '用你的数据检验',
+    dataTestHint: '粘贴两列：原因，然后是结果，每行一个时期或案例（至少 8 行）。可以包含标题行和日期列。与链接方向一致的明显关系记为成立；方向相反记为被否定；没有明显关系记为无定论 —— 不会记为否定，因为小表格通常缺乏检验力。',
+    dataTestPlaceholder: '月份, 供应商延误（周）, 我们的延误（周）\n2026-01, 0, 1\n2026-02, 2, 2\n…',
+    dataTimeOrdered: '各行按时间顺序排列（可检验方向）',
+    dataRun: '检验并记录',
     waiting: '等待你说明信念',
     sources: {
       tripwire: '触发条件',

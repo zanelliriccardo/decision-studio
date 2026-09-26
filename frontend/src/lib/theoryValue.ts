@@ -293,3 +293,31 @@ export async function setHypothesisDecisiveness(
     `/api/v1/graph/${projectId}/hypotheses/${hypothesisId}/decisiveness`, { decisiveness },
   ))
 }
+
+export interface DataTestResult {
+  hypothesis: LinkHypothesis
+  result: 'held' | 'refuted' | 'inconclusive'
+  method: string
+  n: number
+  pValue: number | null
+  summary: string
+}
+
+/**
+ * Test a link against two pasted columns (cause, effect). The server picks the
+ * test, and records the result like any other, so it moves conviction.
+ */
+export async function testHypothesisWithData(
+  projectId: string, hypothesisId: string, table: string, timeOrdered: boolean, event?: string,
+): Promise<DataTestResult> {
+  const res = await apiPost<{
+    hypothesis: ApiHypothesis; result: DataTestResult['result']; method: string; n: number
+    p_value: number | null; summary: string
+  }>(`/api/v1/graph/${projectId}/hypotheses/${hypothesisId}/data`, {
+    table, time_ordered: timeOrdered, event: event?.trim() || undefined,
+  })
+  return {
+    hypothesis: toHypothesis(res.hypothesis), result: res.result, method: res.method,
+    n: res.n, pValue: res.p_value, summary: res.summary,
+  }
+}

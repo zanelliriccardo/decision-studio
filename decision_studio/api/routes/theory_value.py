@@ -322,6 +322,55 @@ async def set_hypothesis_decisiveness(
     return _hypothesis(row)
 
 
+class HypothesisDataRequest(BaseModel):
+    #: Two columns, cause then effect, one row per period or case. CSV, TSV or
+    #: semicolon-separated; a header row and a leading label column are fine.
+    table: str = Field(..., max_length=200_000)
+    #: Rows are in time order (enables a lagged, directional test).
+    time_ordered: bool = True
+    event: str | None = EventField
+
+
+class HypothesisDataResponse(BaseModel):
+    hypothesis: HypothesisResponse
+    result: Literal["held", "refuted", "inconclusive"]
+    method: str
+    n: int
+    statistic: float | None = None
+    p_value: float | None = None
+    summary: str
+
+
+@router.post(
+    "/graph/{project_id}/hypotheses/{hypothesis_id}/data",
+    response_model=HypothesisDataResponse,
+)
+async def record_hypothesis_data(
+    project_id: UUID,
+    hypothesis_id: UUID,
+    req: HypothesisDataRequest,
+    session: AsyncSession = Depends(get_session),
+) -> HypothesisDataResponse:
+    """Test a link against the decider's own numbers. Moves conviction like any result."""
+    from decision_studio.reasoning.link_data import TableError
+
+    await _require_project(project_id, session)
+    try:
+        row, verdict = await link_tests.record_data_result(
+            session, project_id, hypothesis_id, req.table,
+            time_ordered=req.time_ordered, event=req.event,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TableError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return HypothesisDataResponse(
+        hypothesis=_hypothesis(row), result=verdict.result,  # type: ignore[arg-type]
+        method=verdict.method, n=verdict.n, statistic=verdict.statistic,
+        p_value=verdict.p_value, summary=verdict.summary,
+    )
+
+
 # --- Field experiment results ---
 
 
