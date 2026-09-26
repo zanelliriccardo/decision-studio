@@ -237,3 +237,46 @@ class TestLinkData:
         # Columns swapped: what the link calls the cause is really the follower.
         verdict = analyse(effect, cause)
         assert verdict.result == "refuted" and "backwards" in verdict.summary
+
+
+# --- Causes that share a driver ---
+
+from decision_studio.graph.belief_propagation import propagate_beliefs  # noqa: E402
+from decision_studio.graph.shared_causes import dependence_report, find_shared_causes  # noqa: E402
+
+
+def _budget_graph():
+    g = nx.DiGraph()
+    g.add_node("budget", prior=0.5)
+    for node in ("hiring", "tooling", "miss", "escalation"):
+        g.add_node(node)
+    kw = dict(strength=1.0, evidence_score=1.0)
+    g.add_edge("budget", "hiring", **kw)
+    g.add_edge("budget", "tooling", **kw)
+    g.add_edge("hiring", "miss", **kw)
+    g.add_edge("tooling", "miss", **kw)
+    g.add_edge("miss", "escalation", **kw)
+    return propagate_beliefs(g)
+
+
+class TestSharedCauses:
+    def test_the_budget_example(self):
+        graph = _budget_graph()
+        assert graph.nodes["miss"]["belief"] == pytest.approx(0.75)
+        report = dependence_report(graph)
+        assert report["miss"]["belief_if_dependent"] == pytest.approx(0.5)
+        assert report["miss"]["shared_with"] == ["budget"]
+        # The gap is carried downstream, with no shared cause of its own.
+        assert report["escalation"]["belief_if_dependent"] == pytest.approx(0.5)
+        assert report["escalation"]["shared_with"] == []
+
+    def test_independent_causes_are_left_alone(self):
+        g = nx.DiGraph()
+        g.add_node("a", prior=0.5)
+        g.add_node("b", prior=0.5)
+        g.add_node("c")
+        g.add_edge("a", "c", strength=1.0, evidence_score=1.0)
+        g.add_edge("b", "c", strength=1.0, evidence_score=1.0)
+        graph = propagate_beliefs(g)
+        assert find_shared_causes(graph) == {}
+        assert dependence_report(graph) == {}

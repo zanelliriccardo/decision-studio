@@ -196,6 +196,22 @@ export default function NodeDetailPanel({
                 </div>
               </div>
             )}
+            {/* Noisy-OR counts causes as independent chances. Where they share
+                a driver that overstates the belief; this is the other end. */}
+            {node.beliefIfDependent != null && (
+              <p className="mt-1 text-[10px] text-amber-300 leading-snug" data-testid="shared-cause">
+                {t.nodeDetail.ifDependent.replace('{p}', `${Math.round(node.beliefIfDependent * 100)}%`)}{' '}
+                {node.sharedCauses && node.sharedCauses.length > 0
+                  ? t.nodeDetail.sharedDriver.replace(
+                      '{claims}',
+                      node.sharedCauses
+                        .map((id) => nodeMap.get(id)?.text ?? id)
+                        .map((text) => `“${text.length > 60 ? `${text.slice(0, 57)}…` : text}”`)
+                        .join(', '),
+                    )
+                  : t.nodeDetail.sharedInherited}
+              </p>
+            )}
           </div>
         )}
 

@@ -24,6 +24,12 @@ class ClaimResponse(BaseModel):
     source_sentence: str | None = None
     belief_low: float | None = None
     belief_high: float | None = None
+    #: The belief if causes that share a driver move together (graph/shared_causes.py).
+    #: Set only where it differs materially from ``belief``.
+    belief_if_dependent: float | None = None
+    #: The upstream claims those causes share. Empty when the gap is inherited
+    #: from a claim further up.
+    shared_causes: list[str] = []
     # --- Human review state (decision reasoning) ---
     review_status: str = "accepted"
     is_active: bool = True

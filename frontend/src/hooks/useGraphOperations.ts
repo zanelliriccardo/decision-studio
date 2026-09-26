@@ -31,6 +31,8 @@ export function transformApiGraph(api: Record<string, unknown>): CausalGraph {
     sourceSentence: (n.source_sentence as string) ?? null,
     beliefLow: (n.belief_low as number) ?? null,
     beliefHigh: (n.belief_high as number) ?? null,
+    beliefIfDependent: (n.belief_if_dependent as number) ?? null,
+    sharedCauses: (n.shared_causes as string[]) ?? [],
     reviewStatus: ((n.review_status as string) ?? 'accepted') as CausalGraph['nodes'][0]['reviewStatus'],
     isActive: (n.is_active as boolean) ?? true,
     userNote: (n.user_note as string) ?? null,

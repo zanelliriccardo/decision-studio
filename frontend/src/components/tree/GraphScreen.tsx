@@ -50,6 +50,8 @@ interface ApiNode {
   source_sentence?: string | null
   belief_low?: number | null
   belief_high?: number | null
+  belief_if_dependent?: number | null
+  shared_causes?: string[]
   review_status?: string
   is_active?: boolean
   user_note?: string | null
@@ -155,6 +157,8 @@ function transformNode(api: ApiNode): CausalNode {
     sourceSentence: api.source_sentence ?? null,
     beliefLow: api.belief_low ?? null,
     beliefHigh: api.belief_high ?? null,
+    beliefIfDependent: api.belief_if_dependent ?? null,
+    sharedCauses: api.shared_causes ?? [],
     reviewStatus: (api.review_status as CausalNode['reviewStatus']) ?? 'accepted',
     isActive: api.is_active ?? true,
     userNote: api.user_note ?? null,

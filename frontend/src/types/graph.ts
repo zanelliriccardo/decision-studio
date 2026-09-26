@@ -51,6 +51,10 @@ export interface CausalNode {
   sourceSentence: string | null
   beliefLow: number | null
   beliefHigh: number | null
+  /** The belief if causes sharing a driver move together; set only where it differs materially. */
+  beliefIfDependent?: number | null
+  /** The upstream claims those causes share (empty: inherited from further up). */
+  sharedCauses?: string[]
   // Human review state
   reviewStatus: ReviewStatus
   isActive: boolean

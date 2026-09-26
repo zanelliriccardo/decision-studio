@@ -127,6 +127,9 @@ export const zh: Translations = {
     disconnected: '实时未连接',
   },
   nodeDetail: {
+    ifDependent: '如果它的原因同步变化而非相互独立：{p}。',
+    sharedDriver: '它们共同依赖 {claims}，把它们当作独立的机会会高估这一信念。真实值介于两个数字之间。',
+    sharedInherited: '继承自上游某个原因共享驱动因素的主张。',
     title: '命题详情',
     criticalPath: '关键路径',
     claimText: '命题文本',

@@ -34,6 +34,7 @@ from decision_studio.graph.anchoring import (
     is_peripheral,
 )
 from decision_studio.graph.belief_propagation import propagate_beliefs
+from decision_studio.graph.shared_causes import dependence_report
 from decision_studio.graph.stability import belief_intervals
 from decision_studio.graph.critical_path import find_critical_path
 from decision_studio.graph.edge_weight import inflation as edge_inflation
@@ -180,6 +181,7 @@ def _assemble_graph_response(
     graph_revision: int = 1,
     decision_objective: str | None = None,
     decision_anchor: dict | None = None,
+    dependence: dict[str, dict] | None = None,
 ) -> GraphResponse:
     """Build a GraphResponse from DB objects and computed graph attributes."""
     critical_path_set = set(critical_path)
@@ -235,6 +237,8 @@ def _assemble_graph_response(
                 source_sentence=getattr(claim, "source_sentence", None),
                 belief_low=intervals.get(node_id, (None, None))[0] if intervals else None,
                 belief_high=intervals.get(node_id, (None, None))[1] if intervals else None,
+                belief_if_dependent=(dependence or {}).get(node_id, {}).get("belief_if_dependent"),
+                shared_causes=(dependence or {}).get(node_id, {}).get("shared_with", []),
                 review_status=getattr(claim, "review_status", "accepted") or "accepted",
                 is_active=getattr(claim, "is_active", True),
                 user_note=getattr(claim, "user_note", None),
@@ -409,6 +413,9 @@ async def _compute_full_graph(
     # Monte Carlo rather than one-node worst-case perturbation: uncertainty
     # compounds along chains, and per-edge noise is scaled by link_confidence.
     intervals = belief_intervals(graph)
+    # Where noisy-OR's independence assumption carries the number: a second
+    # figure with related causes combined as one.
+    dependence = dependence_report(graph)
     # Skip expensive sensitivity analysis on graph load — it deep-copies the
     # graph 2× per edge and re-propagates beliefs each time (1,244+ runs on a
     # 622-edge graph).  Sensitivity is available via a dedicated endpoint.
@@ -422,6 +429,7 @@ async def _compute_full_graph(
         graph_revision=graph_revision,
         decision_objective=decision_objective,
         decision_anchor=decision_anchor,
+        dependence=dependence,
     )
 
 

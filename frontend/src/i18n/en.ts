@@ -125,6 +125,9 @@ export const en = {
     disconnected: 'Real-time disconnected',
   },
   nodeDetail: {
+    ifDependent: 'If its causes move together rather than independently: {p}.',
+    sharedDriver: 'They share {claims}, so counting them as separate chances overstates this belief. The truth lies between the two figures.',
+    sharedInherited: 'Inherited from a claim further up whose causes share a driver.',
     title: 'Claim Detail',
     criticalPath: 'Critical Path',
     claimText: 'Claim Text',
