@@ -320,7 +320,7 @@ async def _generate_downstream(
     event_callback: Any,
     log: "_PipelineEventLog",
 ) -> None:
-    """Generate theories, then compare them, once the graph exists.
+    """Generate theories, challenge them, set tripwires, compare, recommend.
 
     Runs in its own session: the pipeline's has just been committed and reusing
     it would tie the graph's fate to these calls.
@@ -363,6 +363,31 @@ async def _generate_downstream(
             logger.warning("Automatic theory generation failed for %s: %s", project_id, exc)
             await emit("theory_generation", "error", {"error": str(exc)})
             return
+
+    # The test half of the loop. Without these the theories were never attacked
+    # (so `contested` and the objection discount never applied, and the
+    # recommendation weighed arguments nobody had challenged) and never given
+    # anything that could prove them wrong — which also left the decider's
+    # conviction with no observations to move it. Each in its own session: a
+    # failed critique must not roll back theories.
+    from decision_studio.reasoning import adversary
+
+    for stage, step in (
+        ("adversary", adversary.challenge_theories),
+        ("tripwires", adversary.generate_tripwires),
+    ):
+        async with async_session() as session:
+            try:
+                await emit(stage, "started")
+                report = await step(session, uuid_id)
+                await emit(stage, "completed", {
+                    k: v for k, v in (report or {}).items()
+                    if isinstance(v, (int, float, str, bool))
+                })
+            except Exception as exc:
+                await session.rollback()
+                logger.warning("Automatic %s failed for %s: %s", stage, project_id, exc)
+                await emit(stage, "error", {"error": str(exc)})
 
     # A separate session again: a failed comparison must not roll back theories.
     async with async_session() as session:
@@ -438,6 +463,7 @@ async def start_analysis(
     return AnalyzeResponse(project_id=project.id, status="processing")
 
 
+# DEAD-CODE-CANDIDATE DC-25: no frontend caller (checkpoint resume is not reachable from the UI). See docs/DEAD_CODE_REPORT.md
 @router.post("/analyze/{project_id}/resume", response_model=AnalyzeResponse)
 async def resume_analysis(
     project_id: UUID,

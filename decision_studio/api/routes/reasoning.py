@@ -867,6 +867,7 @@ async def dismiss_objection(
 # ---------------------------------------------------------------------------
 
 
+# DEAD-CODE-CANDIDATE DC-29 (orphaned feature, recommend wiring rather than deleting): no screen collects the recollection this needs, so the outside view never runs from the UI. See docs/DEAD_CODE_REPORT.md
 @router.post("/graph/{project_id}/outside-view", response_model=OutsideViewResponse)
 async def run_outside_view(
     project_id: UUID,
@@ -979,6 +980,7 @@ def _experiment_response(experiment) -> ExperimentResponse_:
     )
 
 
+# DEAD-CODE-CANDIDATE DC-28: synthetic experiments: no frontend caller (design + execute). Decide: wire into the theory panel or remove. See docs/DEAD_CODE_REPORT.md
 @router.post(
     "/graph/{project_id}/theories/{theory_id}/experiments/synthetic",
     response_model=ExperimentResponse_,
@@ -1007,6 +1009,7 @@ async def design_synthetic_experiment(
     return _experiment_response(experiment)
 
 
+# DEAD-CODE-CANDIDATE DC-28: synthetic experiments: no frontend caller (design + execute). Decide: wire into the theory panel or remove. See docs/DEAD_CODE_REPORT.md
 @router.post(
     "/graph/{project_id}/experiments/{experiment_id}/execute",
     response_model=ExperimentResponse_,

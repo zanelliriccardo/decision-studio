@@ -1,3 +1,4 @@
+// DEAD-CODE-CANDIDATE DC-32 [file]: used only by DC-31. See docs/DEAD_CODE_REPORT.md
 /**
  * CausalAnalysisGraph — Three-layer causal analysis visualization.
  *

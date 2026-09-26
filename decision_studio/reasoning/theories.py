@@ -25,12 +25,14 @@ from sqlalchemy.orm import selectinload
 
 from decision_studio.config import settings
 from decision_studio.db.models import (
+    Experiment,
     Project,
     Theory,
     TheoryClaim,
     TheoryEdge,
     TheoryEvidence,
     TheoryRevision,
+    TheoryTripwire,
 )
 from decision_studio.llm.client import LLMClient, get_llm_client
 from decision_studio.llm.prompts import language_instruction
@@ -161,6 +163,26 @@ async def _next_revision_number(session: AsyncSession, project_id: UUID) -> int:
     return (latest or 0) + 1
 
 
+def _same_claim(candidate: ValidatedTheory, previous: Theory) -> bool:
+    """Whether two versions make the same claim about the decision.
+
+    A theory key carries the decider's conviction and every test result. If a
+    theory about O1 "achieving" the outcome were matched to a regenerated one
+    about O1 "threatening" it — the same links read the other way — the
+    conviction stated for the first would silently transfer to its opposite.
+    Unknown values on either side (theories from before options existed) do
+    not block a match.
+    """
+    for field in ("option_key", "predicted_effect"):
+        before = getattr(previous, field, None)
+        after = getattr(candidate, field, None)
+        if field == "predicted_effect" and "unclear" in (before, after):
+            continue
+        if before is not None and after is not None and before != after:
+            return False
+    return True
+
+
 def match_previous(
     candidate: ValidatedTheory,
     previous: list[Theory],
@@ -172,6 +194,7 @@ def match_previous(
             if (
                 str(theory.theory_key) == candidate.previous_theory_key
                 and str(theory.theory_key) not in used_keys
+                and _same_claim(candidate, theory)
             ):
                 return theory
 
@@ -182,7 +205,7 @@ def match_previous(
     best: Theory | None = None
     best_overlap = 0.0
     for theory in previous:
-        if str(theory.theory_key) in used_keys:
+        if str(theory.theory_key) in used_keys or not _same_claim(candidate, theory):
             continue
         prior_edges = {str(link.edge_id) for link in theory.edge_links}
         if not prior_edges:
@@ -466,6 +489,28 @@ async def generate_theories(
         key_to_theory[str(theory_key)] = theory
 
     await session.flush()
+
+    # Commitments follow the theory, not the row. A pending tripwire is what the
+    # decider said would change their mind, and a field test may be running;
+    # leaving them on the retired version made both vanish from view on every
+    # regeneration. Observed tripwires stay with the version they judged.
+    for candidate, previous_theory in matches:
+        if previous_theory is None:
+            continue
+        successor = key_to_theory[str(previous_theory.theory_key)]
+        await session.execute(
+            update(TheoryTripwire)
+            .where(
+                TheoryTripwire.theory_id == previous_theory.id,
+                TheoryTripwire.status == "pending",
+            )
+            .values(theory_id=successor.id)
+        )
+        await session.execute(
+            update(Experiment)
+            .where(Experiment.theory_id == previous_theory.id, Experiment.kind == "field")
+            .values(theory_id=successor.id)
+        )
 
     # Retire previous versions, and mark genuinely dropped theories superseded.
     for previous_theory in previous:

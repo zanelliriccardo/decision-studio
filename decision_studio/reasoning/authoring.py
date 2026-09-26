@@ -327,6 +327,7 @@ async def add_edge(
     return edge, plan
 
 
+# DEAD-CODE-CANDIDATE DC-20: no route or caller; undo goes through review.undo_operation. See docs/DEAD_CODE_REPORT.md
 async def undo_addition(
     session: AsyncSession, project_id: UUID, operation_id: UUID
 ) -> GraphOperation:
@@ -532,6 +533,7 @@ async def infer_links_for_new_claims(
     return created
 
 
+# DEAD-CODE-CANDIDATE DC-23 (runs, no effect): propagates and discards the result — beliefs are recomputed on every graph read anyway. The /recompute endpoint and the frontend call to it can go with it. See docs/DEAD_CODE_REPORT.md
 async def recompute_beliefs(session: AsyncSession, project_id: UUID) -> dict[str, Any]:
     """Rebuild the DAG and re-propagate beliefs over the whole graph.
 

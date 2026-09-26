@@ -1,3 +1,4 @@
+# DEAD-CODE-CANDIDATE DC-12 [module]: nothing imports it (the grounder builds its queries in code). See docs/DEAD_CODE_REPORT.md
 """Prompts and schemas for Stage 3: Evidence Relevance Scoring."""
 
 EVIDENCE_RELEVANCE_SYSTEM = """\

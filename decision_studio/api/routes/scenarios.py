@@ -58,6 +58,10 @@ def _apply_overrides(
             # Create a detached copy so we don't modify the DB object
             patched = copy.copy(edge)
             patched.strength = overrides[edge_id_str]
+            # The graph honours a user's strength override over `strength`;
+            # a scenario is asking "what if it were this instead", so its value
+            # must win over the override too.
+            patched.strength_override = None
             result.append(patched)
         else:
             result.append(edge)

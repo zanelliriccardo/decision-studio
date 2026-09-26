@@ -213,10 +213,15 @@ def start_ledger(project_id: str | None = None) -> UsageLedger:
     return ledger
 
 
+# The two ``def`` lines below had been lost, leaving their bodies as unreachable
+# code after ``start_ledger``'s return — so nothing could set a stage and every
+# call was recorded under "other", emptying the per-stage cost breakdown.
+def current_ledger() -> UsageLedger | None:
     """The ledger for the analysis running on this task, or None outside one."""
     return _ledger.get()
 
 
+def set_stage(stage: str) -> None:
     """Attribute subsequent calls to a pipeline stage.
 
     Set by the orchestrator as it moves between stages. Calls made outside any

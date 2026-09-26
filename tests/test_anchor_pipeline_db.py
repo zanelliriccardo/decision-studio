@@ -210,6 +210,12 @@ async def test_editing_the_anchor_syncs_outcomes_and_rescores(session):
     assert set(frame) == {"Y1", "Y2"}
     assert all(c.relevance == 0.42 for c in claims if c.origin != "frame")
 
+    # Re-saving the same anchor is not a change: no re-score (review fix).
+    calls_before = len(edit_llm.calls_to(RELEVANCE_SYSTEM))
+    again = await anchor_service.save_anchor(session, project.id, dict(result["anchor"]), llm=edit_llm)
+    assert again["report"]["claims_rescored"] == 0
+    assert len(edit_llm.calls_to(RELEVANCE_SYSTEM)) == calls_before
+
     # Replacing an outcome: the removed one's key is never reissued, so the new
     # outcome gets its own node instead of inheriting the old node's links.
     y2_id = frame["Y2"].id

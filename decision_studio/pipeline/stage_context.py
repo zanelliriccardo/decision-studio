@@ -1,3 +1,4 @@
+# DEAD-CODE-CANDIDATE DC-09 [module]: never wired into the orchestrator; stage cost attribution is now done in CausalPipeline._emit. See docs/DEAD_CODE_REPORT.md
 """Instrumentation for a pipeline stage.
 
 Three things were missing and all three have the same shape, so they are solved

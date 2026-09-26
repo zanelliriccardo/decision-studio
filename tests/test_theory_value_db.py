@@ -108,8 +108,12 @@ async def test_conviction_moves_only_through_observations(session):
     assert conviction.current == 0.5
 
     await adversary.record_observation(session, project.id, tripwire.id, observed=True)
+    # Recording the same tripwire again corrects the result; it does not add a
+    # second piece of evidence (review fix: evidence was double-counted).
+    await adversary.record_observation(session, project.id, tripwire.id, observed=True)
     after_tripwire = (await theory_value.convictions(session, project.id, [key]))[str(key)]
     assert after_tripwire.current == pytest.approx(0.2)
+    assert len(after_tripwire.steps) == 1
     assert after_tripwire.steps[0].source == "tripwire"
 
     # A link test: the model writes the hypothesis, the result moves conviction.
@@ -149,8 +153,15 @@ async def test_conviction_moves_only_through_observations(session):
 
 async def test_regenerating_keeps_conviction_and_results(session):
     project, theories = await _anchored_project_with_theories(session)
-    key = theories["Vendor slippage decides Q3"].theory_key
+    first = theories["Vendor slippage decides Q3"]
+    key = first.theory_key
     await theory_value.state_prior(session, project.id, key, 0.7)
+    pending = TheoryTripwire(theory_id=first.id, observable="Vendor confirms in writing",
+                             direction="confirms", horizon_days=10)
+    field = Experiment(project_id=project.id, theory_id=first.id, kind="field",
+                       hypothesis="h", design="d", status="designed")
+    session.add_all([pending, field])
+    await session.commit()
 
     llm = FakeLLM([(THEORY_GENERATION_SYSTEM, _theories)])
     result = await generate_theories(session, project.id, llm=llm)
@@ -160,3 +171,32 @@ async def test_regenerating_keeps_conviction_and_results(session):
     listing = await list_theories(project.id, session)
     current = next(t for t in listing.theories if t.theory_key == key)
     assert current.conviction == pytest.approx(0.7)
+    # Commitments follow the theory to its new version (review fix).
+    assert [tw.observable for tw in current.tripwires] == ["Vendor confirms in writing"]
+    await session.refresh(field)
+    assert field.theory_id == again.id
+
+
+async def test_executive_brief_leads_with_the_answer_and_the_options(session):
+    from decision_studio.reasoning.brief import export_brief
+
+    project, theories = await _anchored_project_with_theories(session)
+    key = theories["Vendor slippage decides Q3"].theory_key
+    await theory_value.state_prior(session, project.id, key, 0.6)
+
+    markdown, media, _ = await export_brief(session, project.id, "markdown")
+    assert media.startswith("text/markdown")
+    order = [markdown.index(h) for h in (
+        "## Executive summary", "## Options at a glance",
+        "## The theories on O1", "## Appendix: quality of the analysis",
+    )]
+    assert order == sorted(order)
+    # Q4 was never examined: the brief must say so on page one, not hide it.
+    assert "| O2 Commit to Q4 | — | — | Not examined |" in markdown
+    assert "No theory examines O2" in markdown
+    assert "your conviction 60%" in markdown
+
+    html, _, _ = await export_brief(session, project.id, "html")
+    assert "<table>" in html and "<h4>" in html
+    pdf, media, name = await export_brief(session, project.id, "pdf")
+    assert media == "application/pdf" and pdf.startswith(b"%PDF") and name.endswith(".pdf")

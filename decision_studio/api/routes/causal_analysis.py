@@ -87,6 +87,7 @@ class CausalAnalysisResponse(BaseModel):
 
 # ── Endpoints ──
 
+# DEAD-CODE-CANDIDATE DC-24: deprecated endpoints of the removed CausalAnalysis screen (HANDOVER 6); URL kept as a public contract, no frontend caller. Also sole user of pipeline/three_layer_engine.py and the MultiLayerEvidence/MetricSeries tables. See docs/DEAD_CODE_REPORT.md
 @router.post("/analyze/text", response_model=CausalAnalysisResponse)
 async def deprecated_analyze_text(
     body: TextAnalysisRequest,

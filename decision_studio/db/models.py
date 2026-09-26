@@ -367,6 +367,7 @@ class Scenario(Base):
 # Three-Layer Causal Analysis Models
 # --------------------------------------------------------------------------
 
+# DEAD-CODE-CANDIDATE DC-30 [table]: written only by the deprecated DC-24 endpoints. Dropping it needs a migration. See docs/DEAD_CODE_REPORT.md
 class MultiLayerEvidence(Base):
     """Multi-layer causal evidence. Each row is one piece of evidence for a
     causal relationship produced by a specific layer/algorithm."""
@@ -469,6 +470,7 @@ class AdvisorMessage(Base):
     session: Mapped["AdvisorSession"] = relationship(back_populates="messages")
 
 
+# DEAD-CODE-CANDIDATE DC-30 [table]: written only by the deprecated DC-24 endpoints (the pipeline's statistical validator receives metric data in memory). Dropping it needs a migration. See docs/DEAD_CODE_REPORT.md
 class MetricSeries(Base):
     """Time-series metric data from CSV/Excel/screenshot uploads."""
 

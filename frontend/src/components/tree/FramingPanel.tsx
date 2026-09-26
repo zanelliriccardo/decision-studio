@@ -1,3 +1,4 @@
+// DEAD-CODE-CANDIDATE DC-37 [file]: 15-question framing removed; unreachable. See docs/DEAD_CODE_REPORT.md
 import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, Check, ChevronDown, ChevronRight, ClipboardList, Loader2, X,

@@ -1,3 +1,4 @@
+// DEAD-CODE-CANDIDATE DC-35 [test]: tests a dead component; failing. See docs/DEAD_CODE_REPORT.md
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'

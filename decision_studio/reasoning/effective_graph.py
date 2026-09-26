@@ -50,6 +50,7 @@ REVIEW_STATUSES: tuple[str, ...] = (
 ATTENTION_REVIEW_STATUSES: frozenset[str] = frozenset({"uncertain", "needs_evidence"})
 
 
+# DEAD-CODE-CANDIDATE DC-21: typing Protocol referenced nowhere. See docs/DEAD_CODE_REPORT.md
 class _Reviewable(Protocol):
     """Minimal shape shared by reviewed claims and edges."""
 

@@ -1,3 +1,4 @@
+# DEAD-CODE-CANDIDATE DC-24 [module]: used only by the deprecated causal_analysis endpoints. See docs/DEAD_CODE_REPORT.md
 """Three-layer causal engine orchestrator for Decision Studio.
 
 Routes data through up to three layers depending on data quality:

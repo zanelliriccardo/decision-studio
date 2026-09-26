@@ -56,6 +56,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from decision_studio.reasoning.brief_view import BriefView, build_view, pct, quality_lines
 from decision_studio.reasoning.calibration import band
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,14 @@ def _styles() -> dict[str, ParagraphStyle]:
             "ceh", parent=base["Normal"], fontName="Times-Bold", fontSize=8.5,
             leading=11, textColor=MUTED,
         ),
+        "tile": ParagraphStyle(
+            "ti", parent=base["Normal"], fontName="Times-Bold", fontSize=15,
+            leading=18, textColor=ACCENT, alignment=1,
+        ),
+        "tilel": ParagraphStyle(
+            "tl", parent=base["Normal"], fontName="Times-Roman", fontSize=7,
+            leading=9, textColor=MUTED, alignment=1,
+        ),
         "mech": ParagraphStyle(
             "me", parent=base["Normal"], fontName="Times-Italic", fontSize=9,
             leading=13, textColor=MUTED, leftIndent=22, spaceAfter=1,
@@ -192,6 +201,20 @@ def _theory_block(theory, data: dict[str, Any], index: int, S) -> list:
     if theory.is_stale:
         meta.append("<b>Out of date</b> — the graph changed after this was written")
     out.append(Paragraph(" · ".join(meta), S["meta"]))
+    if getattr(theory, "option_key", None):
+        effect = {"achieves": "achieves", "threatens": "threatens"}.get(
+            theory.predicted_effect or "", "has an unclear effect on")
+        reach = "" if theory.reaches_outcome else " — its chain does not reach a success criterion"
+        out.append(Paragraph(
+            f"<b>A theory of {_escape(theory.option_key)}:</b> choosing it {effect} the outcome{reach}.",
+            S["meta"],
+        ))
+    conviction = data.get("convictions", {}).get(str(theory.theory_key))
+    if conviction is not None and conviction.current is not None:
+        out.append(Paragraph(
+            f"<b>Decider's conviction:</b> {pct(conviction.current)} (stated {pct(conviction.prior)})",
+            S["meta"],
+        ))
     out.append(Paragraph(_escape(theory.summary), S["body"]))
 
     chain = theory.causal_chain or []
@@ -246,118 +269,48 @@ def _theory_block(theory, data: dict[str, Any], index: int, S) -> list:
     return out
 
 
-def _one_pager(data: dict[str, Any], S) -> list:
-    """Page one: everything needed to act, and nothing that needs a page turn.
-
-    Deliberately dense. A reader who reads only this page must come away with
-    the recommendation, what it rests on, the strongest reason not to follow it,
-    and an honest sense of how well it is supported.
-    """
-    advice = data.get("advice")
-    theories = data["theories"]
-    out: list = []
-
-    if data.get("objective"):
-        out += [
-            Paragraph("THE DECISION", S["h3"]),
-            Paragraph(_escape(data["objective"]), S["lead"]),
-            Spacer(1, 0.15 * cm),
-        ]
-
-    if advice is not None:
-        panel_items = [
-            Paragraph("RECOMMENDATION", S["h3"]),
-            Paragraph(_escape(advice.recommendation), S["lead"]),
-        ]
-        if advice.reasoning:
-            panel_items.append(Paragraph(_escape(advice.reasoning), S["body"]))
-        if advice.depends_on:
-            panel_items.append(Paragraph("THIS HOLDS IF", S["h3"]))
-            panel_items.append(_bullets(list(advice.depends_on), S["body"]))
-        if advice.against_it:
-            panel_items.append(Paragraph("THE CASE FOR DOING OTHERWISE", S["h3"]))
-            panel_items.append(Paragraph(_escape(advice.against_it), S["body"]))
-        if advice.next_step:
-            panel_items.append(Paragraph(
-                "<b>This week.</b> " + _escape(advice.next_step), S["body"]
-            ))
-        panel_items.append(Paragraph(
-            f"Support for this: {_escape(advice.confidence)}", S["meta"]
-        ))
-        out += [_panel(panel_items), Spacer(1, 0.3 * cm)]
-    elif theories:
-        out += [
-            _panel([
-                Paragraph("NO RECOMMENDATION WAS SYNTHESISED", S["h3"]),
-                Paragraph(
-                    "The explanations below were found but not weighed against "
-                    "each other. Read them individually.",
-                    S["body"],
-                ),
-            ], tint=CAUTION_BG, edge=CAUTION_EDGE),
-            Spacer(1, 0.3 * cm),
-        ]
-
-    # One row per explanation: enough to know what was found and how contested
-    # it is, without the causal chains that make up the detail pages.
-    if theories:
-        out.append(Paragraph("WHAT THE ANALYSIS FOUND", S["h3"]))
-        rows = [["#", "Explanation", "Confidence", "Chain", "Contested"]]
-        for index, theory in enumerate(theories, start=1):
-            live = [
-                o for o in data["objections"].get(theory.id, []) if not o.dismissed
-            ]
-            cited = getattr(theory, "cited_links", 0) or 0
-            connected = getattr(theory, "connected_links", 0) or 0
-            rows.append([
-                str(index),
-                _escape(theory.title),
-                BAND_LABELS.get(band(theory.confidence), "—"),
-                # Chain integrity on page one, beside the confidence. The
-                # reader recommends from this table, so a theory resting on one
-                # verified junction of three must say so here rather than only
-                # in the detail pages.
-                f"{connected} of {cited}" if cited else "—",
-                f"{len(live)} objection(s)" if live else "—",
-            ])
-        out.append(_summary_table(rows, S))
-        out.append(Paragraph(
-            "Each is set out in full on the following pages, with its causal "
-            "chain, the objections raised against it, and what would prove it "
-            "wrong.",
-            S["meta"],
-        ))
-
-    # On page one, because a reader who goes no further still needs it.
-    out += [
-        Spacer(1, 0.2 * cm),
-        _panel([
-            Paragraph("HOW TO READ THIS", S["h3"]),
-            Paragraph(
-                "Confidence is a band, not a percentage — nothing here has been "
-                "calibrated against outcomes. The causal links were inferred by "
-                "a language model from the supplied documents: this is an "
-                "argument made explicit, not a measurement. Objections were "
-                "generated adversarially and may themselves be wrong; they are "
-                "included because an argument nobody has attacked has not been "
-                "tested.",
-                S["body"],
-            ),
-        ], tint=CAUTION_BG, edge=CAUTION_EDGE),
-    ]
-    return out
+def _key_numbers(view: BriefView, S) -> Table:
+    """Four tiles: what a reader scans before reading anything."""
+    cells = [[
+        [Paragraph(_escape(value), S["tile"]), Paragraph(_escape(label.upper()), S["tilel"])]
+        for label, value in view.key_numbers
+    ]]
+    t = Table(cells, colWidths=[4.0 * cm] * 4)
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), PANEL),
+        ("BOX", (0, 0), (-1, -1), 0.5, RULE),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.white),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    return t
 
 
-def _summary_table(rows: list[list[str]], S) -> Table:
-    """The one-row-per-theory table on page one."""
-    data = [
-        [Paragraph(c, S["cellh"] if r == 0 else S["cell"]) for c in row]
-        for r, row in enumerate(rows)
-    ]
-    t = Table(
-        data, colWidths=[0.7 * cm, 7.4 * cm, 2.2 * cm, 1.7 * cm, 3.0 * cm],
-        repeatRows=1,
-    )
+def _option_cell(line, S) -> Paragraph:
+    if line is None:
+        return Paragraph("—", S["cell"])
+    extra = f"<br/><i>support {line.support}"
+    if line.conviction is not None:
+        extra += f"; your conviction {pct(line.conviction)}"
+    extra += "</i>"
+    return Paragraph(_escape(line.title) + extra, S["cell"])
+
+
+def _options_table(view: BriefView, S) -> Table:
+    """One row per option: the strongest case each way, and whether it was examined."""
+    status_colour = {"Not examined": "#8a5a00", "Contested": "#0d5c73"}
+    rows = [[Paragraph(h, S["cellh"]) for h in
+             ("Option", "Strongest case for", "Strongest case against", "Status")]]
+    for row in view.options:
+        colour = status_colour.get(row.status, "#1a1a1a")
+        rows.append([
+            Paragraph(f"<b>{_escape(row.key)}</b> {_escape(row.label)}", S["cell"]),
+            _option_cell(row.case_for, S),
+            _option_cell(row.case_against, S),
+            Paragraph(f'<font color="{colour}"><b>{_escape(row.status)}</b></font>', S["cell"]),
+        ])
+    t = Table(rows, colWidths=[3.2 * cm, 5.2 * cm, 5.2 * cm, 2.4 * cm], repeatRows=1)
     t.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
@@ -371,9 +324,134 @@ def _summary_table(rows: list[list[str]], S) -> Table:
     return t
 
 
+def _executive_summary(view: BriefView, S) -> list:
+    """Page one: everything needed to act, and nothing that needs a page turn.
+
+    Deliberately dense. A reader who reads only this page must come away with
+    the recommendation, what it rests on, the strongest reason not to follow it,
+    how each option fared, and what could still change the answer.
+    """
+    out: list = []
+    if view.decision:
+        out += [Paragraph("THE DECISION", S["h3"]), Paragraph(_escape(view.decision), S["lead"])]
+    facts = []
+    if view.deadline:
+        facts.append(f"<b>Decide by:</b> {_escape(view.deadline)}")
+    if view.constraints:
+        facts.append("<b>Hard constraints:</b> " + _escape("; ".join(view.constraints)))
+    if facts:
+        out.append(Paragraph(" · ".join(facts), S["body"]))
+    out.append(Spacer(1, 0.1 * cm))
+
+    advice = view.advice
+    if advice is not None:
+        panel_items = [
+            Paragraph("RECOMMENDATION", S["h3"]),
+            Paragraph(_escape(advice.recommendation), S["lead"]),
+        ]
+        if advice.reasoning:
+            panel_items.append(Paragraph(_escape(advice.reasoning), S["body"]))
+        if advice.depends_on:
+            panel_items.append(Paragraph("THIS HOLDS IF", S["h3"]))
+            panel_items.append(_bullets(list(advice.depends_on)[:4], S["body"]))
+        if advice.against_it:
+            panel_items.append(Paragraph("THE CASE FOR DOING OTHERWISE", S["h3"]))
+            panel_items.append(Paragraph(_escape(advice.against_it), S["body"]))
+        if advice.next_step:
+            panel_items.append(Paragraph(
+                "<b>Next step this week.</b> " + _escape(advice.next_step), S["body"]
+            ))
+        panel_items.append(Paragraph(
+            f"Support for this recommendation: <b>{_escape(advice.confidence)}</b>", S["meta"]
+        ))
+        out += [_panel(panel_items), Spacer(1, 0.25 * cm)]
+    elif view.theories:
+        out += [
+            _panel([
+                Paragraph("NO RECOMMENDATION WAS SYNTHESISED", S["h3"]),
+                Paragraph(
+                    "The theories below were found but not weighed against each "
+                    "other. Read them individually.", S["body"],
+                ),
+            ], tint=CAUTION_BG, edge=CAUTION_EDGE),
+            Spacer(1, 0.25 * cm),
+        ]
+
+    out += [_key_numbers(view, S), Spacer(1, 0.3 * cm)]
+
+    if view.options:
+        out += [Paragraph("OPTIONS AT A GLANCE", S["h3"]), _options_table(view, S),
+                Spacer(1, 0.2 * cm)]
+
+    if view.warnings:
+        out += [_panel(
+            [Paragraph("BEFORE RELYING ON THIS", S["h3"]), _bullets(view.warnings, S["body"])],
+            tint=CAUTION_BG, edge=CAUTION_EDGE,
+        )]
+    return out
+
+
+def _tests_section(view: BriefView, S) -> list:
+    """What could still change the answer, as a list someone can commission."""
+    out: list = [Paragraph("What would change the decision", S["h1"])]
+    if view.tests:
+        out.append(Paragraph(
+            "Run these before committing. Tests on links are ranked by how much the "
+            "outcome depends on the link and how little is known about it; tripwires "
+            "are the observations agreed in advance, with the date to check.",
+            S["meta"],
+        ))
+        kinds = {"link": "TEST", "tripwire": "WATCH FOR", "field": "FIELD TEST"}
+        for item in view.tests[:8]:
+            block = [Paragraph(
+                f"<b>{kinds[item.kind]}</b> · " + _escape(item.what)
+                + (f" — <b>check by {item.due.strftime('%d %B %Y')}</b>" if item.due else ""),
+                S["body"],
+            )]
+            if item.wrong_if and item.kind != "tripwire":
+                block.append(Paragraph("<i>Wrong if:</i> " + _escape(item.wrong_if), S["chain"]))
+            if item.how:
+                block.append(Paragraph("<i>How:</i> " + _escape(item.how), S["chain"]))
+            if item.theory_title:
+                block.append(Paragraph("<i>Bears on:</i> " + _escape(item.theory_title), S["mech"]))
+            block.append(Spacer(1, 0.15 * cm))
+            out.append(KeepTogether(block))
+    else:
+        out.append(Paragraph(
+            "No test or tripwire is recorded. Without one, nothing observed before the "
+            "deadline can change this analysis — the decision rests on judgement alone.",
+            S["body"],
+        ))
+
+    if view.conviction_trail:
+        out.append(Paragraph("HOW THE DECIDER'S CONVICTION HAS MOVED", S["h3"]))
+        out.append(Paragraph(
+            "Conviction is the decider's own stated belief in a theory, kept apart from "
+            "the model's confidence and updated only by observed results.", S["meta"],
+        ))
+        rows = [[Paragraph(h, S["cellh"]) for h in ("Theory", "Stated", "Now", "Observations")]]
+        for line, conviction in view.conviction_trail:
+            rows.append([
+                Paragraph(_escape(line.title), S["cell"]),
+                Paragraph(pct(conviction.prior), S["cell"]),
+                Paragraph(f"<b>{pct(conviction.current)}</b>", S["cell"]),
+                Paragraph(str(len([s for s in conviction.steps if s.applied])), S["cell"]),
+            ])
+        t = Table(rows, colWidths=[9.2 * cm, 1.8 * cm, 1.8 * cm, 3.2 * cm])
+        t.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("BACKGROUND", (0, 0), (-1, 0), PANEL),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.7, MUTED),
+            ("LINEBELOW", (0, 1), (-1, -2), 0.3, RULE),
+        ]))
+        out.append(t)
+    return out
+
+
 def build_pdf(data: dict[str, Any]) -> bytes:
-    """Render the gathered brief data to PDF: one summary page, then detail."""
+    """Render the brief: executive summary, what would change it, then the reasoning."""
     S = _styles()
+    view = build_view(data)
     project = data["project"]
     theories = data["theories"]
 
@@ -386,32 +464,33 @@ def build_pdf(data: dict[str, Any]) -> bytes:
         ),
         HRFlowable(width="100%", thickness=0.5, color=RULE, spaceAfter=10),
     ]
-    story += _one_pager(data, S)
+    story += _executive_summary(view, S)
 
-    # ── Detail, from here on ────────────────────────────────────────────────
+    # ── What could still change it ──────────────────────────────────────────
+    story.append(PageBreak())
+    story += _tests_section(view, S)
+
+    # ── The reasoning, grouped by option ────────────────────────────────────
     if theories:
         story.append(PageBreak())
-        story.append(Paragraph("The explanations in full", S["h1"]))
+        story.append(Paragraph("The theories in full", S["h1"]))
         story.append(Paragraph(
-            "Each explanation as the analysis produced it: the causal chain step "
-            "by step, what argues against it, and what would prove it wrong.",
+            "Grouped by the option each argues about: the causal chain step by step, "
+            "what argues against it, and what would prove it wrong.",
             S["meta"],
         ))
-        for index, theory in enumerate(theories, start=1):
-            # KeepTogether so a theory's objections cannot end up on a different
-            # page from its conclusion — which is how a qualification gets lost.
-            story.append(KeepTogether(_theory_block(theory, data, index, S)))
-
-    if data.get("reference_cases"):
-        story.append(Paragraph("Comparable cases", S["h1"]))
-        story.append(_bullets(
-            [
-                f"{c.outcome}: {c.cases_with_outcome} of {c.cases_total} "
-                f"({c.base_rate:.0%})"
-                for c in data["reference_cases"]
-            ],
-            S["body"],
-        ))
+        for row in view.options:
+            bound = [l for l in view.theories if getattr(l.theory, "option_key", None) == row.key]
+            if not bound:
+                continue
+            story.append(Paragraph(f"Option {_escape(row.key)}: {_escape(row.label)}", S["h1"]))
+            for line in bound:
+                story.append(KeepTogether(_theory_block(line.theory, data, line.index, S)))
+        if view.situational:
+            if view.options:
+                story.append(Paragraph("Conditions that bear on every option", S["h1"]))
+            for line in view.situational:
+                story.append(KeepTogether(_theory_block(line.theory, data, line.index, S)))
 
     competing = [d for d in data.get("debates", []) if d.relation == "competing"]
     if competing:
@@ -430,6 +509,34 @@ def build_pdf(data: dict[str, Any]) -> bytes:
                     "prefer the option that holds either way.</i>",
                     S["chain"],
                 ))
+
+    if data.get("reference_cases"):
+        story.append(Paragraph("Comparable cases", S["h1"]))
+        story.append(_bullets(
+            [
+                f"{c.outcome}: {c.cases_with_outcome} of {c.cases_total} "
+                f"({c.base_rate:.0%})"
+                for c in data["reference_cases"]
+            ],
+            S["body"],
+        ))
+
+    # ── Appendix ────────────────────────────────────────────────────────────
+    story.append(Paragraph("Appendix: quality of the analysis", S["h1"]))
+    story.append(_bullets(quality_lines(view.graph_metrics), S["body"]))
+    story.append(_panel([
+        Paragraph("HOW TO READ THIS", S["h3"]),
+        Paragraph(
+            "Support is a band, not a percentage — nothing here has been calibrated "
+            "against outcomes. Conviction percentages are the decider's own stated "
+            "beliefs, updated by Bayes' rule only from observed results. The causal "
+            "links were inferred by a language model from the supplied documents and "
+            "reviewed by hand: this is an argument made explicit, not a measurement. "
+            "Objections were generated adversarially and may themselves be wrong; they "
+            "are included because an argument nobody has attacked has not been tested.",
+            S["body"],
+        ),
+    ], tint=CAUTION_BG, edge=CAUTION_EDGE))
 
     def footer(canvas, doc):
         """Project title on the left, page number on the right."""

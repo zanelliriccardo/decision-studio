@@ -114,11 +114,13 @@ export interface CausalAnalysisResult {
  * would hide that the endpoint is still there and still unmaintained, and
  * whoever revives the feature should find this rather than write it again.
  */
+// DEAD-CODE-CANDIDATE DC-40: no callers (wrapper for the DC-24 endpoints). See docs/DEAD_CODE_REPORT.md
 export async function deprecatedAnalyzeText(data: { question: string; context?: string; project_id?: string }) {
   return apiPost<CausalAnalysisResult>('/api/v1/causal/analyze/text', data)
 }
 
 /** DEPRECATED — no callers. See {@link deprecatedAnalyzeText}. */
+// DEAD-CODE-CANDIDATE DC-40: no callers (wrapper for the DC-24 endpoints). See docs/DEAD_CODE_REPORT.md
 export async function deprecatedAnalyzeCSV(file: File, options?: {
   question?: string; project_id?: string; data_type?: string; max_lag?: number; alpha?: number
 }) {
@@ -133,6 +135,7 @@ export async function deprecatedAnalyzeCSV(file: File, options?: {
 }
 
 /** DEPRECATED — no callers. See {@link deprecatedAnalyzeText}. */
+// DEAD-CODE-CANDIDATE DC-40: no callers (wrapper for the DC-24 endpoints). See docs/DEAD_CODE_REPORT.md
 export async function deprecatedAnalyzeScreenshot(file: File, options?: { question?: string; project_id?: string }) {
   const form = new FormData()
   form.append('file', file)

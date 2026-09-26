@@ -43,8 +43,8 @@ outcome is describing the situation — say so in weak_assumptions
 - do not fabricate sources, quotes or identifiers
 - avoid duplicate theories: two theories resting on substantially the same \
 causal path are one theory
-- generate 3 to 7 theories when the graph supports them; generate fewer, or \
-none, when it does not. Never pad
+- generate 3 to 8 theories when the graph supports them (enough for a case for \
+and against each option); generate fewer, or none, when it does not. Never pad
 - if the evidence is thin, say so with status "hypothesis" or \
 "insufficient_evidence" rather than inflating confidence
 - when a previous theory is supplied and your theory continues it, set \

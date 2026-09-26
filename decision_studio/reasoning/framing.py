@@ -1,3 +1,4 @@
+# DEAD-CODE-CANDIDATE DC-02 [module]: 15-question framing catalogue, removed in migration 016; imported only by DC-01 and DC-03. See docs/DEAD_CODE_REPORT.md
 """The framing questionnaire: what the system must know before it reasons.
 
 Strategic decisions have no data to appeal to, so the quality of the output is

@@ -1,3 +1,4 @@
+// DEAD-CODE-CANDIDATE DC-33 [file]: first intake UI; unreachable from main.tsx. See docs/DEAD_CODE_REPORT.md
 import { useState } from 'react'
 import { HelpCircle, Loader2, SkipForward } from 'lucide-react'
 import { useT } from '../../i18n/index.tsx'

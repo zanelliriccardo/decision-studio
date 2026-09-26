@@ -1075,6 +1075,10 @@ class CausalPipeline:
     ) -> None:
         """Emit a pipeline event via the callback, if provided."""
         logger.debug("Pipeline event: %s", event)
+        if event.status == "started":
+            # Every stage announces itself here, so this is the one place cost
+            # attribution can follow the run without each stage opting in.
+            usage_tracking.set_stage(event.stage)
         if callback is not None:
             await callback(event)
 

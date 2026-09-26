@@ -32,6 +32,7 @@ import { computeCumulativeTime } from '../../lib/graphUtils.ts'
 import { computeVisibleNodes, findTopPaths } from '../../lib/graph/focusCompute.ts'
 import { useTemporalBeliefs } from '../../hooks/useTemporalBeliefs.ts'
 import { anchorNodeFields, applyDecisionLens, isAnchored, toAnchor } from '../../lib/decisionAnchor.ts'
+import * as reasoningApi from '../../lib/api/reasoning.ts'
 
 // --- Snake_case API response types ---
 
@@ -244,6 +245,19 @@ export default function GraphScreen() {
 
   // Decision reasoning: theories, clarification questions and graph review.
   const reasoning = useReasoning(projectId ?? null)
+  const [challenging, setChallenging] = useState(false)
+  const runTheoryAction = useCallback(async (action: () => Promise<unknown>) => {
+    if (!projectId) return
+    setChallenging(true)
+    try {
+      await action()
+      await reasoning.loadTheories()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t.errors.loadFailed)
+    } finally {
+      setChallenging(false)
+    }
+  }, [projectId, reasoning, t])
   const [showTimeScrubber, setShowTimeScrubber] = useState(false)
   const [timeFilter, setTimeFilter] = useState<number | null>(null)
 
@@ -993,16 +1007,17 @@ export default function GraphScreen() {
           <span className="hidden sm:inline">{t.graph.backToReport}</span>
         </button>
 
-        {/* Export for people who were not in the analysis. */}
+        {/* The executive brief, for people who were not in the analysis. A
+            primary action: once the theories exist, this is what leaves the room. */}
         <a
           href={`/api/v1/graph/${projectId}/brief?format=pdf`}
-          target="_blank"
-          rel="noreferrer"
+          download
           title={t.graph.exportPdfHint}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border text-text-secondary hover:text-text-primary bg-surface-700 hover:bg-surface-600 border-surface-600 transition-colors"
+          data-testid="download-report"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border text-white bg-ocean-500 hover:bg-ocean-400 border-ocean-500 transition-colors"
         >
           <FileDown className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">{t.graph.exportPdf}</span>
+          <span>{t.graph.exportPdf}</span>
         </a>
 
         {/* Add a claim the documents did not contain */}
@@ -1175,6 +1190,14 @@ export default function GraphScreen() {
                 onRegenerate={() => void reasoning.regenerateTheories()}
                 onDismissChangeSummary={reasoning.clearChangeSummary}
                 onTheoriesChanged={() => void reasoning.loadTheories()}
+                // These props existed on the panel and were never passed, so
+                // challenging theories, setting tripwires and recording what
+                // happened were unreachable from the graph screen.
+                challenging={challenging}
+                onChallenge={() => void runTheoryAction(() => reasoningApi.challengeTheories(projectId!))}
+                onGenerateTripwires={() => void runTheoryAction(() => reasoningApi.generateTripwires(projectId!))}
+                onDismissObjection={(id) => void runTheoryAction(() => reasoningApi.dismissObjection(projectId!, id))}
+                onObserveTripwire={(id, observed) => void runTheoryAction(() => reasoningApi.observeTripwire(projectId!, id, observed))}
                 onClose={handleClosePanel}
               />
             )}

@@ -58,6 +58,7 @@ def _softmax(logits):
     return exp / exp.sum()
 
 
+# DEAD-CODE-CANDIDATE DC-13: no callers. See docs/DEAD_CODE_REPORT.md
 def score_evidence_nli(
     causal_claim: str,
     snippet: str,

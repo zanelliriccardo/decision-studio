@@ -1,3 +1,4 @@
+// DEAD-CODE-CANDIDATE DC-38 [file]: decision profile removed in migration 016; unreachable. See docs/DEAD_CODE_REPORT.md
 import { useEffect, useState } from 'react'
 import { Check, Loader2, UserCog } from 'lucide-react'
 import { toast } from 'sonner'

@@ -1,3 +1,4 @@
+# DEAD-CODE-CANDIDATE DC-10 [module]: older copy of DC-09, already prefixed deprecated_; nothing imports it. See docs/DEAD_CODE_REPORT.md
 """DEPRECATED — instrumentation for a pipeline stage. Written, never wired up.
 
 **Nothing imports this.** It was built to give every stage a start line with the

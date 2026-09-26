@@ -1,3 +1,4 @@
+// DEAD-CODE-CANDIDATE DC-34 [file]: unreachable from main.tsx. See docs/DEAD_CODE_REPORT.md
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Loader2 } from 'lucide-react'

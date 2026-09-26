@@ -39,6 +39,7 @@ from decision_studio.graph.critical_path import find_critical_path
 from decision_studio.graph.edge_weight import inflation as edge_inflation
 from decision_studio.reasoning.effective_graph import (
     effective_strength,
+    filter_effective,
     is_claim_effective,
     is_edge_effective,
 )
@@ -58,8 +59,19 @@ def _build_nx_graph(
     claims: list[Claim],
     edges: list[CausalEdge],
 ) -> nx.DiGraph:
-    """Build a NetworkX DiGraph from ORM claim and edge objects."""
+    """Build the graph beliefs are propagated over: the reviewed graph only.
+
+    Human review is authoritative, so a rejected or deactivated claim or link
+    takes no part in propagation, and a strength the user set outranks the one
+    the model inferred. This builder used to take every row as stored: the
+    beliefs, intervals and critical path on the graph screen were computed as if
+    no review had happened, while the theories — built from the effective
+    snapshot — reflected it. Rejected elements are still returned by the API
+    (shown dimmed); they are simply absent from this graph, so they carry no
+    belief.
+    """
     g = nx.DiGraph()
+    claims, edges = filter_effective(list(claims), list(edges))
 
     for claim in claims:
         g.add_node(
@@ -81,7 +93,10 @@ def _build_nx_graph(
             str(edge.target_claim_id),
             edge_id=str(edge.id),
             mechanism=edge.mechanism,
-            strength=edge.strength,
+            strength=effective_strength(edge),
+            # Scales the Monte Carlo noise per edge (graph/stability.py). It was
+            # never passed, so every edge was shaken at full sigma.
+            link_confidence=getattr(edge, "link_confidence", None),
             time_delay=edge.time_delay,
             conditions=edge.conditions,
             reversible=edge.reversible,
@@ -428,6 +443,7 @@ async def get_graph(
     return await _compute_full_graph(project_id, session)
 
 
+# DEAD-CODE-CANDIDATE DC-26: no frontend caller; bypasses the review audit log (strength edits go through PATCH .../edges/{id}/review). See docs/DEAD_CODE_REPORT.md
 @router.patch("/edge/{edge_id}", response_model=EdgeResponse)
 async def update_edge(
     edge_id: UUID,

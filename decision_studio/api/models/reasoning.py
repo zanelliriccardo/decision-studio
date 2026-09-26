@@ -531,17 +531,20 @@ class GenerateTheoriesRequest(BaseModel):
 
 
 
+# DEAD-CODE-CANDIDATE DC-22: clarification-system response model; no route uses it. See docs/DEAD_CODE_REPORT.md
 class AnswerResponse(BaseModel):
     affected_theory_ids: list[UUID] = []
     stale_theory_count: int = 0
 
 
+# DEAD-CODE-CANDIDATE DC-22: clarification-system request model; no route uses it. See docs/DEAD_CODE_REPORT.md
 class QuestionStatusRequest(BaseModel):
     status: QuestionStatus
 
 
 
 
+# DEAD-CODE-CANDIDATE DC-22: clarification-system model; used only by dead frontend DC-36. See docs/DEAD_CODE_REPORT.md
 class ProposedGraphChange(BaseModel):
     """A graph edit an answer suggests. Never applied automatically."""
 

@@ -1,3 +1,4 @@
+// DEAD-CODE-CANDIDATE DC-35 [file]: unreachable from main.tsx; its test is one of the pre-existing failures. See docs/DEAD_CODE_REPORT.md
 import { useState } from 'react'
 import {
   AlertTriangle, Check, ChevronDown, ChevronRight, ClipboardList,

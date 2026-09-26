@@ -1,3 +1,4 @@
+# DEAD-CODE-CANDIDATE DC-11 [module]: prompt of an earlier evidence grounder; nothing imports it. See docs/DEAD_CODE_REPORT.md
 """DEPRECATED — no importers.
 
 Left over from an earlier version of evidence grounding. The current

@@ -141,7 +141,17 @@ export default function IntakeScreen() {
     if (!projectId || starting) return
     setStarting(true)
     try {
-      const body = payload ?? Object.values(answers)
+      // Only what was answered, and only in the form it was answered: a stray
+      // empty `text` beside a choice, or a cleared choice, would otherwise reach
+      // every extraction and inference prompt as if the user had said it.
+      const body: IntakeAnswer[] =
+        payload ?? Object.values(answers).flatMap((a): IntakeAnswer[] =>
+        (a.text ?? '').trim()
+          ? [{ question_id: a.question_id, text: (a.text ?? '').trim() }]
+          : a.choice !== null && a.choice !== undefined
+            ? [{ question_id: a.question_id, choice: a.choice }]
+            : [],
+      )
       await apiPost<AnalyzeResponse>(`/api/v1/intake/${projectId}/start`, {
         answers: body,
         ...(anchorEdited && anchor ? { decision_anchor: cleanForSave(anchor) } : {}),
@@ -154,11 +164,17 @@ export default function IntakeScreen() {
     }
   }
 
+  // Clicking the selected option again clears it. Without this the only way
+  // out of a mis-click is to type over it.
   const setChoice = (id: string, choice: number) =>
-    setAnswers((prev) => ({
-      ...prev,
-      [id]: { question_id: id, choice, text: '' },
-    }))
+    setAnswers((prev) => {
+      if (prev[id]?.choice === choice) {
+        const rest = { ...prev }
+        delete rest[id]
+        return rest
+      }
+      return { ...prev, [id]: { question_id: id, choice, text: '' } }
+    })
 
   const setText = (id: string, text: string) =>
     setAnswers((prev) => ({

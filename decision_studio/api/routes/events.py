@@ -15,6 +15,7 @@ from decision_studio.db.models import EventTimeline
 from decision_studio.db.session import get_session
 
 logger = logging.getLogger(__name__)
+# DEAD-CODE-CANDIDATE DC-27: the whole /api/v1/events CRUD router has no frontend caller. See docs/DEAD_CODE_REPORT.md
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
 
 

@@ -1,3 +1,4 @@
+// DEAD-CODE-CANDIDATE DC-36 [file]: clarification system removed (HANDOVER 4.9); unreachable; its test fails. See docs/DEAD_CODE_REPORT.md
 import { useState } from 'react'
 import {
   AlertTriangle, ArrowRight, Check, HelpCircle, Loader2, RotateCcw, Send,

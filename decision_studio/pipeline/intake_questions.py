@@ -1,3 +1,4 @@
+# DEAD-CODE-CANDIDATE DC-07 [module]: first intake system (paused the pipeline), replaced by reasoning/intake.py; nothing imports it. See docs/DEAD_CODE_REPORT.md
 """Asking about ambiguity before the causal graph is built.
 
 The pipeline pauses here rather than after it finishes. The reason is cost

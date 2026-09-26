@@ -115,7 +115,9 @@ def compile_graph(graph: nx.DiGraph, base_sigma: float = DEFAULT_SIGMA) -> _Comp
     edges: dict[tuple[str, str], tuple[float, float, float, bool]] = {}
     for source, target, data in graph.edges(data=True):
         weight = data.get("strength", 0.5)
-        modulation = _evidence_modulation(data.get("evidence_score", 0.5))
+        modulation = _evidence_modulation(
+            data.get("evidence_score", 0.5), data.get("has_contradiction", False)
+        )
         confidence = data.get("link_confidence")
         if confidence is None:
             # Pre-split edge: no confidence to scale by, so use full sigma.
@@ -388,6 +390,7 @@ class RankStability:
         }
 
 
+# DEAD-CODE-CANDIDATE DC-16: no callers. See docs/DEAD_CODE_REPORT.md
 def rank_stability(
     options: dict[str, nx.DiGraph],
     outcome_nodes: list[str],

@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from decision_studio.db.models import Theory, TheoryBelief
@@ -247,6 +247,19 @@ async def record_evidence(
     """
     if source not in SOURCES or source == "elicited":
         raise ValueError(f"Evidence cannot come from '{source}'")
+    if source_id is not None:
+        # One observation, one piece of evidence. Correcting a recorded result
+        # (a tripwire marked "happened" by mistake, a link re-tested) replaces
+        # the earlier row; adding a second would count the same observation
+        # twice and compound it into the conviction.
+        await session.execute(
+            delete(TheoryBelief).where(
+                TheoryBelief.project_id == project_id,
+                TheoryBelief.theory_key == theory_key,
+                TheoryBelief.source == source,
+                TheoryBelief.source_id == source_id,
+            )
+        )
     session.add(TheoryBelief(
         project_id=project_id,
         theory_key=theory_key,

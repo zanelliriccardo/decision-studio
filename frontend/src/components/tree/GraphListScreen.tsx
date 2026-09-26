@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { GitBranch, CheckCircle2, Loader2, AlertCircle, Search, Trash2, X } from 'lucide-react'
+import { GitBranch, CheckCircle2, Loader2, AlertCircle, Search, Trash2, X, FileText, FileDown } from 'lucide-react'
 import { toast } from 'sonner'
 import { apiGet, apiDelete } from '../../lib/api/client.ts'
 import { useT } from '../../i18n/index.tsx'
@@ -150,7 +150,9 @@ export default function GraphListScreen() {
                   <button
                     onClick={() => {
                       if (project.status === 'completed') {
-                        navigate(`/graph/${project.id}`)
+                        // The summary is where an analysis concludes; the graph
+                        // and the report are one click away on the same row.
+                        navigate(`/summary/${project.id}`)
                       } else if (project.status === 'processing') {
                         navigate(`/analysis/${project.id}`)
                       }
@@ -165,6 +167,32 @@ export default function GraphListScreen() {
                     </span>
                   </button>
                   <div className="flex items-center gap-2 shrink-0">
+                    {project.status === 'completed' && (
+                      <div className="flex items-center gap-1" data-testid="project-actions">
+                        <button
+                          onClick={() => navigate(`/summary/${project.id}`)}
+                          className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-md text-text-secondary hover:text-text-primary bg-surface-700 hover:bg-surface-600 border border-surface-600 transition-colors"
+                        >
+                          <FileText className="w-3 h-3" aria-hidden="true" />
+                          <span className="hidden md:inline">{t.graphList.openSummary}</span>
+                        </button>
+                        <button
+                          onClick={() => navigate(`/graph/${project.id}`)}
+                          className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-md text-text-secondary hover:text-text-primary bg-surface-700 hover:bg-surface-600 border border-surface-600 transition-colors"
+                        >
+                          <GitBranch className="w-3 h-3" aria-hidden="true" />
+                          <span className="hidden md:inline">{t.graphList.openGraph}</span>
+                        </button>
+                        <a
+                          href={`/api/v1/graph/${project.id}/brief?format=pdf`}
+                          download
+                          className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-md text-white bg-ocean-500 hover:bg-ocean-400 border border-ocean-500 transition-colors"
+                        >
+                          <FileDown className="w-3 h-3" aria-hidden="true" />
+                          <span className="hidden md:inline">{t.graphList.downloadReport}</span>
+                        </a>
+                      </div>
+                    )}
                     <span className="text-xs text-text-muted">{timeAgo(project.created_at)}</span>
                     {project.status === 'completed' && (
                       <span className="flex items-center gap-1 text-xs text-confidence-high">

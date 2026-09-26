@@ -168,7 +168,12 @@ async def save_anchor(
         links = await infer_links_for_new_claims(session, project_id, new_ids, llm=client)
         report["links_inferred"] = len(links)
 
-    if previous != anchor:
+    def _content(a: dict[str, Any] | None) -> dict[str, Any] | None:
+        # Confirming a draft unchanged is not a change: re-scoring every claim
+        # costs a model call per forty and would return the same scores.
+        return {k: v for k, v in a.items() if k != "status"} if a else None
+
+    if _content(previous) != _content(anchor):
         await _rescore_claims(session, project_id, anchor, client, report)
         await mark_reasoning_stale(
             session, project_id, reason="The decision anchor changed"

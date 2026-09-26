@@ -102,6 +102,27 @@ export default function DecisionSummary() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+      {/* The two ways out of an analysis, before anything else: the causal
+          graph to check the reasoning, and the report for everyone else. */}
+      <div className="flex flex-wrap justify-end gap-2" data-testid="summary-actions">
+        <button
+          type="button"
+          onClick={() => navigate(`/graph/${projectId}`)}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-surface-700 text-text-secondary border border-surface-600 hover:bg-surface-600 transition-colors"
+        >
+          <GitBranch className="w-3.5 h-3.5" aria-hidden="true" />
+          {t.graphList.openGraph}
+        </button>
+        <a
+          href={`/api/v1/graph/${projectId}/brief?format=pdf`}
+          download
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-ocean-500 hover:bg-ocean-400 border border-ocean-500 transition-colors"
+        >
+          <Download className="w-3.5 h-3.5" aria-hidden="true" />
+          {t.graphList.downloadReport}
+        </a>
+      </div>
+
       <header>
         <ObjectiveEditor
           objective={objective}
@@ -510,8 +531,7 @@ export default function DecisionSummary() {
         </button>
         <a
           href={`/api/v1/graph/${projectId}/brief?format=pdf`}
-          target="_blank"
-          rel="noreferrer"
+          download
           className="flex-1 min-w-[180px] inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-lg bg-surface-700 text-text-secondary border border-surface-600 hover:bg-surface-600 transition-colors"
         >
           <Download className="w-3.5 h-3.5" aria-hidden="true" />
