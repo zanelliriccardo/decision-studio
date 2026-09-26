@@ -206,6 +206,27 @@ class TheoryResponse(BaseModel):
     change_kind: str | None = None
     change_explanation: str | None = None
     created_at: datetime | None = None
+    # --- Theory of value ---
+    #: The anchor option this is a theory of, and what it predicts for it.
+    option_key: str | None = None
+    predicted_effect: str | None = None
+    outcome_keys: list[str] = []
+    #: Computed from the validated chain, not taken from the model.
+    reaches_outcome: bool = False
+    # --- The decider's conviction, apart from the model's confidence ---
+    conviction: float | None = None
+    conviction_prior: float | None = None
+
+
+class OptionCoverage(BaseModel):
+    """How many current theories argue for and against one option."""
+
+    key: str
+    label: str
+    achieves: int = 0
+    threatens: int = 0
+    unclear: int = 0
+    reaching_outcome: int = 0
 
 
 class ChangeSummary(BaseModel):
@@ -220,6 +241,8 @@ class TheoryListResponse(BaseModel):
     graph_revision: int
     theory_revision: int | None = None
     stale_count: int = 0
+    #: One row per anchor option. An option with no theory is a finding.
+    option_coverage: list[OptionCoverage] = []
 
 
 class TheoryGenerationResponse(BaseModel):
@@ -283,6 +306,9 @@ class TripwireResponse(BaseModel):
 class ObservationRequest(BaseModel):
     observed: bool
     note: str | None = Field(None, max_length=2000)
+    #: How much more likely this outcome is if the theory holds. Omitted, the
+    #: tripwire's direction supplies a default (reasoning/theory_value.py).
+    likelihood_ratio: float | None = Field(None, gt=0, le=20)
 
 
 class ReferenceCaseResponse(BaseModel):

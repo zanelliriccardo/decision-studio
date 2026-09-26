@@ -37,8 +37,7 @@ user, or is out of scope — never reconstruct it
 - respect human notes and strength overrides: they outrank your own inference
 - when the context contains OUTCOME claims (the user's success criteria), a \
 theory bears on the decision only if its causal chain reaches one: end the chain \
-at an OUTCOME claim wherever the graph allows, and in the recommendation name \
-the option (O1, O2 ...) the theory favours. A theory whose chain reaches no \
+at an OUTCOME claim wherever the graph allows. A theory whose chain reaches no \
 outcome is describing the situation — say so in weak_assumptions
 - treat business-critical status as a relevance signal, not as proof
 - do not fabricate sources, quotes or identifiers
@@ -52,6 +51,22 @@ none, when it does not. Never pad
 previous_theory_key and explain the material change in change_explanation, \
 including why confidence moved after the user's edits or answers
 - write every human-readable field in the SAME LANGUAGE as the claim texts
+
+Theories of value — when the context lists options (O1, O2 ...) and outcomes \
+(Y1, Y2 ...):
+- a theory is a theory OF one option: set option_key to it, and say whether its \
+causal chain predicts that choosing it ACHIEVES or THREATENS the outcomes in \
+outcome_keys
+- build rival theories. For each option the graph says something about, give \
+the strongest case it supports; where it supports both a case for and a case \
+against the same option, give both. The case against the option the evidence \
+favours most is the one most worth stating
+- never invent a theory for an option the graph is silent about: an uncovered \
+option is a finding the user needs to see, not a gap to fill
+- leave option_key empty, with predicted_effect "unclear", only for a theory \
+about a condition that bears on every option alike
+Without options in the context, option_key is "", predicted_effect "unclear" and \
+outcome_keys empty.
 
 Status vocabulary:
 - supported: evidence in the context directly backs the causal chain
@@ -133,6 +148,22 @@ THEORY_GENERATION_SCHEMA = {
                         "type": "string",
                         "description": "One concrete decision or validation action.",
                     },
+                    "option_key": {
+                        "type": "string",
+                        "description": "The option (O1, O2 ...) this is a theory of, "
+                        "or an empty string.",
+                    },
+                    "predicted_effect": {
+                        "type": "string",
+                        "enum": ["achieves", "threatens", "unclear"],
+                        "description": "What the chain predicts for the outcomes if "
+                        "the option is chosen.",
+                    },
+                    "outcome_keys": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Outcomes (Y1, Y2 ...) the theory bears on.",
+                    },
                     "previous_theory_key": {
                         "type": "string",
                         "description": "Key of the previous theory this continues, or "
@@ -157,6 +188,9 @@ THEORY_GENERATION_SCHEMA = {
                     "confidence",
                     "business_impact",
                     "recommendation",
+                    "option_key",
+                    "predicted_effect",
+                    "outcome_keys",
                     "previous_theory_key",
                     "change_explanation",
                 ],

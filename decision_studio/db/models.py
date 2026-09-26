@@ -669,6 +669,25 @@ class Theory(Base):
         comment="confidence discounted by objection_load. This is what the panel "
                 "orders by; raw confidence remains visible.",
     )
+    # --- Theory of value (see reasoning/theory_value.py) ---
+    option_key: Mapped[str | None] = mapped_column(
+        String(10), nullable=True,
+        comment="The anchor option this is a theory of (O1..), or null when it "
+                "explains the situation rather than a choice.",
+    )
+    predicted_effect: Mapped[str | None] = mapped_column(
+        String(20), nullable=True,
+        comment="achieves or threatens: what the chain predicts for the outcome "
+                "under that option.",
+    )
+    outcome_keys: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, comment="Anchor outcome keys (Y1..) the theory bears on.",
+    )
+    reaches_outcome: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false",
+        comment="Whether the validated causal chain contains an outcome node. "
+                "Computed from the graph, never taken from the model.",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     claim_links: Mapped[list["TheoryClaim"]] = relationship(
@@ -779,6 +798,82 @@ class TheoryTripwire(Base):
     )
     observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     observed_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TheoryBelief(Base):
+    """The user's conviction in a theory: a stated prior, then evidence.
+
+    Conviction is the decider's own degree of belief, kept apart from the
+    model's confidence. It moves only through things observed in the world —
+    a tripwire, a field experiment, a tested link — each entered as a
+    likelihood ratio, so the arithmetic is Bayes' rule in odds form and the
+    history can be replayed. Never moved by a simulated experiment.
+
+    Keyed by ``theory_key``: a conviction is about the theory, and survives the
+    theory being regenerated into a new row.
+    """
+
+    __tablename__ = "theory_belief"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE")
+    )
+    theory_key: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    kind: Mapped[str] = mapped_column(String(20), comment="prior or evidence")
+    value: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="The stated probability, for a prior."
+    )
+    likelihood_ratio: Mapped[float | None] = mapped_column(
+        Float, nullable=True,
+        comment="P(observation | theory true) / P(observation | theory false), "
+                "for evidence.",
+    )
+    source: Mapped[str] = mapped_column(
+        String(30), comment="elicited, tripwire, field_experiment or link_hypothesis"
+    )
+    source_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    method: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, comment="lottery or direct, for a prior."
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class LinkHypothesis(Base):
+    """A falsifiable hypothesis about one causal link in a theory's chain.
+
+    Links are ranked by value of information — how much the outcome's belief
+    depends on the link, times how unsure the graph is about it — so the test
+    proposed first is the one that would tell the most.
+    """
+
+    __tablename__ = "link_hypothesis"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE")
+    )
+    theory_key: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    theory_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("theory.id", ondelete="SET NULL"), nullable=True
+    )
+    edge_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("causal_edge.id", ondelete="CASCADE")
+    )
+    statement: Mapped[str] = mapped_column(Text)
+    refuted_if: Mapped[str] = mapped_column(Text, comment="What would prove the link wrong.")
+    cheapest_test: Mapped[str] = mapped_column(Text, default="", server_default="")
+    priority: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    leverage: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    uncertainty: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    status: Mapped[str] = mapped_column(
+        String(20), default="open", server_default="open",
+        comment="open, held, refuted or inconclusive",
+    )
+    observed_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

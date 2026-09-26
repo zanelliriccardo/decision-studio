@@ -1174,6 +1174,7 @@ export default function GraphScreen() {
                 onGenerate={() => void reasoning.generateTheories()}
                 onRegenerate={() => void reasoning.regenerateTheories()}
                 onDismissChangeSummary={reasoning.clearChangeSummary}
+                onTheoriesChanged={() => void reasoning.loadTheories()}
                 onClose={handleClosePanel}
               />
             )}

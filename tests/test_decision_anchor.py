@@ -224,6 +224,10 @@ def test_anchor_schemas_satisfy_strict_mode():
         RELEVANCE_SCHEMA,
     )
 
+    from decision_studio.llm.prompts.link_hypotheses import LINK_HYPOTHESIS_SCHEMA
+    from decision_studio.llm.prompts.theory_generation import THEORY_GENERATION_SCHEMA
+
     for schema in (ANCHOR_DRAFT_SCHEMA, RELEVANCE_SCHEMA,
-                   claim_extraction_schema(True), claim_extraction_schema(False)):
+                   claim_extraction_schema(True), claim_extraction_schema(False),
+                   THEORY_GENERATION_SCHEMA, LINK_HYPOTHESIS_SCHEMA):
         assert _strict_problems(schema) == []

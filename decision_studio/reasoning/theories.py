@@ -39,6 +39,7 @@ from decision_studio.llm.prompts.theory_generation import (
     THEORY_GENERATION_SYSTEM,
 )
 from decision_studio.reasoning.context_builder import build_generation_context
+from decision_studio.reasoning.decision_anchor import normalise_anchor
 from decision_studio.reasoning.effective_graph import load_effective_snapshot
 from decision_studio.reasoning.decision_context import (
     decision_objective,
@@ -221,6 +222,13 @@ def describe_change(
         )
     if candidate.recommendation.strip() != (previous.recommendation or "").strip():
         reasons.append("the recommended action changed")
+    if (candidate.option_key, candidate.predicted_effect) != (
+        getattr(previous, "option_key", None), getattr(previous, "predicted_effect", None)
+    ) and (candidate.option_key or getattr(previous, "option_key", None)):
+        reasons.append(
+            f"it now argues that {candidate.option_key or 'no specific option'} "
+            f"{candidate.predicted_effect} the outcome"
+        )
 
     prior_edges = {str(link.edge_id) for link in previous.edge_links}
     new_edges = set(candidate.supporting_edge_ids)
@@ -286,6 +294,10 @@ def _persist_theory(
         generation_id=generation_id,
         # Until the adversary runs, nothing has been objected to.
         adjusted_score=candidate.confidence,
+        option_key=candidate.option_key,
+        predicted_effect=candidate.predicted_effect,
+        outcome_keys=candidate.outcome_keys or None,
+        reaches_outcome=candidate.reaches_outcome,
     )
     session.add(theory)
     theory.claim_links = [
@@ -326,8 +338,10 @@ async def generate_theories(
     """
     # Existence first: an unknown project is a 404, not an invitation to fill
     # in a questionnaire for something that does not exist.
-    if await session.get(Project, project_id) is None:
+    project = await session.get(Project, project_id)
+    if project is None:
         raise LookupError(f"Project {project_id} not found")
+    anchor = normalise_anchor(getattr(project, "decision_anchor", None))
 
     objective = await decision_objective(session, project_id)
 
@@ -388,7 +402,7 @@ async def generate_theories(
 
     known_keys = {str(t.theory_key) for t in previous}
     candidates, report = validate_theories(
-        payload, context.refs, snapshot, known_theory_keys=known_keys
+        payload, context.refs, snapshot, known_theory_keys=known_keys, anchor=anchor
     )
     logger.info(
         "Theory generation %s validation: accepted=%d dropped=%d repaired=%d "

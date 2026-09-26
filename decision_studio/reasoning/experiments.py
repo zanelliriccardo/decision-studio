@@ -61,6 +61,8 @@ from decision_studio.reasoning.decision_context import (
     decision_objective,
     render_objective,
 )
+from decision_studio.reasoning.decision_anchor import project_anchor
+from decision_studio.reasoning.theory_value import record_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -354,8 +356,9 @@ async def design_field(
     theory, objective = await _theory_and_objective(session, project_id, theory_id)
 
     decision = objective or "(decision not stated)"
-    deadline = None
-    constraints = None
+    anchor = await project_anchor(session, project_id)
+    deadline = (anchor or {}).get("deadline") or None
+    constraints = "; ".join((anchor or {}).get("constraints", [])) or None
     change_mind = None
 
     parts = [
@@ -402,6 +405,69 @@ async def design_field(
             "No feasible field test for theory %s: %s", theory_id, not_feasible
         )
 
+    return await _reload(session, experiment.id)
+
+
+#: A field result's default likelihood ratio. Real tests, so a refutation
+#: counts strongly; support counts less, because a test can pass for reasons
+#: unrelated to the theory.
+FIELD_RESULTS = ("supports", "refutes", "inconclusive")
+DEFAULT_FIELD_LR = {"supports": 2.0, "refutes": 0.25, "inconclusive": 1.0}
+
+
+async def record_field_result(
+    session: AsyncSession,
+    project_id: UUID,
+    experiment_id: UUID,
+    result: str,
+    *,
+    likelihood_ratio: float | None = None,
+    note: str | None = None,
+) -> Experiment:
+    """Record what a field experiment found, and let it move conviction.
+
+    This is the path the module docstring promises and nothing implemented: a
+    real test is the one kind of experiment allowed to change what the decider
+    believes. It moves *conviction*, the user's belief (reasoning/theory_value.py),
+    and leaves the model's confidence alone. A synthetic experiment has no such
+    path, by design.
+
+    Raises:
+        LookupError: unknown experiment.
+        ValueError: not a field experiment, or unknown result.
+    """
+    if result not in FIELD_RESULTS:
+        raise ValueError(f"Result must be one of {', '.join(FIELD_RESULTS)}")
+    experiment = (await session.execute(
+        select(Experiment).where(
+            Experiment.id == experiment_id, Experiment.project_id == project_id
+        )
+    )).scalars().first()
+    if experiment is None:
+        raise LookupError(f"Experiment {experiment_id} not found in project")
+    if experiment.kind != "field":
+        raise ValueError("Only a field experiment observes the world")
+
+    theory = await session.get(Theory, experiment.theory_id)
+    experiment.status = "executed"
+    experiment.executed_at = datetime.now(timezone.utc)
+    experiment.summary = (note or "").strip()[:2000] or f"Result: {result}"
+    if result == "supports":
+        experiment.support_count = 1
+    elif result == "refutes":
+        experiment.oppose_count = 1
+    else:
+        experiment.neutral_count = 1
+
+    if theory is not None:
+        await record_evidence(
+            session, project_id, theory.theory_key,
+            likelihood_ratio if likelihood_ratio is not None else DEFAULT_FIELD_LR[result],
+            source="field_experiment", source_id=experiment.id,
+            note=f"Field test {result}: {experiment.hypothesis}",
+            commit=False,
+        )
+    await session.commit()
     return await _reload(session, experiment.id)
 
 

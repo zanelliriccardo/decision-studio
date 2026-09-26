@@ -180,6 +180,14 @@ def normalise_anchor(
     }
 
 
+async def project_anchor(session: Any, project_id: Any) -> dict[str, Any] | None:
+    """A project's anchor, cleaned, or None. For readers that only need it."""
+    from decision_studio.db.models import Project
+
+    project = await session.get(Project, project_id)
+    return normalise_anchor(getattr(project, "decision_anchor", None)) if project else None
+
+
 def anchor_keys(anchor: dict[str, Any] | None) -> set[str]:
     """Every option and outcome key in the anchor."""
     if not anchor:

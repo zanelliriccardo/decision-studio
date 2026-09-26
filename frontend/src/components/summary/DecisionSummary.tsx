@@ -11,6 +11,8 @@ import { apiGet } from '../../lib/api/client.ts'
 import type { Theory } from '../../types/reasoning.ts'
 import ObjectiveEditor from './ObjectiveEditor.tsx'
 import DecisionAnchorCard from '../anchor/DecisionAnchorCard.tsx'
+import TheoryValueSection from '../theory/TheoryValueSection.tsx'
+import OptionCoverageStrip from '../theory/OptionCoverageStrip.tsx'
 import { draftDecisionAnchor, toAnchor } from '../../lib/decisionAnchor.ts'
 import type { DecisionAnchor } from '../../types/graph.ts'
 import UsagePanel from './UsagePanel.tsx'
@@ -284,6 +286,8 @@ export default function DecisionSummary() {
             {t.summary.intro.replace('{n}', String(ranked.length))}
           </p>
 
+          <OptionCoverageStrip anchor={anchor} theories={ranked} />
+
           {ranked.map((theory, index) => {
             const objections = theory.objections.filter((o) => !o.dismissed)
             const tripwires = theory.tripwires.filter((tw) => tw.status === 'pending')
@@ -345,6 +349,17 @@ export default function DecisionSummary() {
                 <p className="text-sm text-text-secondary leading-relaxed">
                   {theory.summary}
                 </p>
+
+                <TheoryValueSection
+                  theory={theory}
+                  anchor={anchor}
+                  onChanged={() => {
+                    if (!projectId) return
+                    void reasoningApi.fetchTheories(projectId)
+                      .then((loaded) => setTheories(loaded.theories))
+                      .catch(() => undefined)
+                  }}
+                />
 
                 {/* The chain, step by step. This is the argument itself; a
                     summary of it is only a claim about the argument. */}

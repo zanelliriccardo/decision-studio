@@ -607,6 +607,58 @@ distribution, peripheral count and how many theories reach an outcome. Run it on
 an old project, anchor that project from the summary page, run it again; then
 compare with a fresh anchored run.
 
+### 4.11 Theories of value
+
+`reasoning/theory_value.py` · `reasoning/link_tests.py` ·
+`graph/value_of_information.py` · `api/routes/theory_value.py` · migration 023
+
+The theory-based view (and Aristotle) treats a theory as a causal map from the
+attributes of a choice to success, held with a stated *conviction* that tests
+move. Three pieces make theories here work that way.
+
+**Option-bound theories.** Generation now asks for rival theories per option —
+the strongest case for and against each, never padding an option the graph is
+silent about. Each theory carries `option_key`, `predicted_effect` (achieves /
+threatens / unclear) and `outcome_keys`. Validation drops option keys the anchor
+does not have, and computes **`reaches_outcome` from the validated chain** — the
+model saying its theory reaches the decision is not evidence that it does.
+**Option coverage** (theory list, summary, recommendation prompt) shows an
+option no theory examines; the recommendation is told not to argue against an
+option the graph never looked at.
+
+**Conviction, apart from confidence.** `theory_belief` rows, keyed by
+`theory_key` so they survive regeneration: a *prior* the decider states, then
+*evidence* as likelihood ratios. Current conviction is replayed in odds form
+(`prior odds × Π LR`). Evidence counts only when recorded after the latest
+prior — restating after seeing a test already includes it. The prior is
+elicited by four lottery comparisons ("bet on the theory, or on a draw with a p
+chance?"), never a slider. Evidence comes from exactly three places:
+
+| Source | Default LR |
+|---|---|
+| Tripwire fired / not (`adversary.record_observation`) | falsifier: 0.25 / 1.5; confirmer: 4 / 0.67 |
+| Field experiment result (`experiments.record_field_result`, new) | supports 2, refutes 0.25, inconclusive 1 |
+| Tested link (`link_tests.record_result`) | held 2, refuted 0.25, inconclusive 1 |
+
+A synthetic experiment has no path to conviction, and nothing touches the
+model's `confidence`. Field results were previously designable but not
+recordable, so the README's "only a field experiment moves confidence" had no
+code behind it; it now moves conviction. A refuted link, like a fired
+falsifier, marks the theory stale.
+
+**Links worth testing.** Each chain link is scored by *leverage* (perturb its
+strength ±0.20, re-propagate, measure the chain destination's belief — the
+outcome node when reached) times *uncertainty* (`1 − link_confidence × (0.5 +
+0.5 × evidence)`). The top three become falsifiable hypotheses with a "wrong if"
+observation and the cheapest test. Leverage is typically small in absolute terms
+(propagation is damped), so the UI shows rank, not the product. Re-proposing
+replaces only open hypotheses; results are kept.
+
+Tripwire and field-test prompts now receive the anchor's outcomes, deadline and
+constraints — the `None` placeholders left by the removed questionnaire.
+
+Every default LR and weight above is hand-chosen and uncalibrated, like §10.
+
 ---
 
 ## 5. Bugs found and fixed

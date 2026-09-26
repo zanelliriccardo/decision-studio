@@ -10,6 +10,8 @@ import type {
   BusinessImpact, ChangeSummary, Theory, TheoryStatus,
 } from '../../types/reasoning.ts'
 import Progress from '../ui/Progress.tsx'
+import TheoryValueSection from '../theory/TheoryValueSection.tsx'
+import OptionCoverageStrip from '../theory/OptionCoverageStrip.tsx'
 
 /**
  * The Theories tab.
@@ -97,11 +99,12 @@ interface TheoryCardProps {
   onSelect: (theory: Theory | null) => void
   onDismissObjection?: (objectionId: string) => void
   onObserveTripwire?: (tripwireId: string, observed: boolean) => void
+  onTheoriesChanged?: () => void
 }
 
 function TheoryCard({
   theory, graph, selected, onSelect,
-  onDismissObjection, onObserveTripwire,
+  onDismissObjection, onObserveTripwire, onTheoriesChanged,
 }: TheoryCardProps) {
   const { t } = useT()
   const [expanded, setExpanded] = useState(false)
@@ -157,6 +160,14 @@ function TheoryCard({
           {theory.title}
         </h4>
         <p className="text-xs text-text-secondary leading-relaxed">{theory.summary}</p>
+
+        {/* The option it argues about, the decider's conviction, and the tests
+            that can move it. */}
+        <TheoryValueSection
+          theory={theory}
+          anchor={graph?.decisionAnchor}
+          onChanged={onTheoriesChanged}
+        />
 
         {/* Confidence as a band. Nothing here has ever been calibrated, so a
             percentage asserts a resolution the pipeline does not possess. */}
@@ -471,6 +482,8 @@ interface TheoryPanelProps {
   onRunOutsideView?: () => void
   onDismissObjection?: (objectionId: string) => void
   onObserveTripwire?: (tripwireId: string, observed: boolean) => void
+  /** Reload the theory list after a recorded result changes it (e.g. marks it stale). */
+  onTheoriesChanged?: () => void
   /** Required framing answers still missing. Reported, never enforced: the
       theories generate anyway and are weaker for the gaps. */
   challenging?: boolean
@@ -496,6 +509,7 @@ export default function TheoryPanel({
   onRunOutsideView,
   onDismissObjection,
   onObserveTripwire,
+  onTheoriesChanged,
   challenging = false,
 }: TheoryPanelProps) {
   const { t } = useT()
@@ -724,6 +738,10 @@ export default function TheoryPanel({
           </p>
         )}
 
+        {hasTheories && (
+          <OptionCoverageStrip anchor={graph?.decisionAnchor} theories={theories} />
+        )}
+
         <div className="space-y-2.5">
           {visible.map((theory) => (
             <TheoryCard
@@ -734,6 +752,7 @@ export default function TheoryPanel({
               onSelect={onSelectTheory}
               onDismissObjection={onDismissObjection}
               onObserveTripwire={onObserveTripwire}
+              onTheoriesChanged={onTheoriesChanged}
             />
           ))}
         </div>

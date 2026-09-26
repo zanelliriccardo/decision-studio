@@ -71,6 +71,12 @@ export function transformTheory(api: ApiTheory): Theory {
     confidenceBand: api.confidence_band ?? 'unknown',
     outsideViewDelta: api.outside_view_delta ?? null,
     outsideViewNote: api.outside_view_note ?? null,
+    optionKey: api.option_key ?? null,
+    predictedEffect: api.predicted_effect ?? null,
+    outcomeKeys: api.outcome_keys ?? [],
+    reachesOutcome: api.reaches_outcome ?? false,
+    conviction: api.conviction ?? null,
+    convictionPrior: api.conviction_prior ?? null,
     objections: (api.objections ?? []).map((o) => ({ ...o })),
     tripwires: (api.tripwires ?? []).map((tw) => ({
       id: tw.id,

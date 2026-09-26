@@ -81,6 +81,7 @@ from decision_studio.reasoning import experiments as experiment_service
 from decision_studio.reasoning import outside_view as outside_view_service
 from decision_studio.reasoning import review as review_service
 from decision_studio.reasoning import theories as theory_service
+from decision_studio.reasoning import theory_value
 from decision_studio.reasoning.calibration import band
 from decision_studio.reasoning.decision_anchor import normalise_anchor
 from decision_studio.reasoning.effective_graph import is_claim_effective, is_edge_effective
@@ -140,6 +141,7 @@ def _theory_response(
     theory: Theory,
     objections: list[ObjectionResponse] | None = None,
     tripwires: list[TripwireResponse] | None = None,
+    conviction: theory_value.Conviction | None = None,
 ) -> TheoryResponse:
     """Map a theory to its response shape, with objections and tripwires."""
     supporting_ev = [
@@ -198,6 +200,12 @@ def _theory_response(
         tripwires=tripwires or [],
         outside_view_delta=theory.outside_view_delta,
         outside_view_note=theory.outside_view_note,
+        option_key=getattr(theory, "option_key", None),
+        predicted_effect=getattr(theory, "predicted_effect", None),
+        outcome_keys=list(getattr(theory, "outcome_keys", None) or []),
+        reaches_outcome=bool(getattr(theory, "reaches_outcome", False)),
+        conviction=conviction.current if conviction else None,
+        conviction_prior=conviction.prior if conviction else None,
         confidence_band=band(theory.confidence),
         is_stale=theory.is_stale,
         stale_reason=theory.stale_reason,
@@ -565,6 +573,9 @@ async def _generate(
         ) from exc
     objection_map = await _objections_by_theory(session, project_id)
     tripwire_map = await _tripwires_by_theory(session, project_id)
+    conviction_map = await theory_value.convictions(
+        session, project_id, [t.theory_key for t in result.theories]
+    )
     return TheoryGenerationResponse(
         graph_revision=result.revision.graph_revision,
         theory_revision=result.revision.revision,
@@ -573,6 +584,7 @@ async def _generate(
                 t,
                 objection_map.get(t.id, []),
                 tripwire_map.get(t.id, []),
+                conviction_map.get(str(t.theory_key)),
             )
             for t in result.theories
         ],
@@ -619,18 +631,25 @@ async def list_theories(
     theories = await theory_service.list_current_theories(session, project_id)
     objection_map = await _objections_by_theory(session, project_id)
     tripwire_map = await _tripwires_by_theory(session, project_id)
+    conviction_map = await theory_value.convictions(
+        session, project_id, [t.theory_key for t in theories]
+    )
     return TheoryListResponse(
         theories=[
             _theory_response(
                 t,
                 objection_map.get(t.id, []),
                 tripwire_map.get(t.id, []),
+                conviction_map.get(str(t.theory_key)),
             )
             for t in theories
         ],
         graph_revision=project.graph_revision or 1,
         theory_revision=theories[0].theory_revision if theories else None,
         stale_count=sum(1 for t in theories if t.is_stale),
+        option_coverage=theory_value.option_coverage(
+            normalise_anchor(project.decision_anchor), theories
+        ),
     )
 
 
@@ -698,10 +717,12 @@ async def get_theory(
         raise HTTPException(status_code=404, detail="Theory not found")
     objection_map = await _objections_by_theory(session, project_id)
     tripwire_map = await _tripwires_by_theory(session, project_id)
+    conviction_map = await theory_value.convictions(session, project_id, [theory.theory_key])
     return _theory_response(
         theory,
         objection_map.get(theory.id, []),
         tripwire_map.get(theory.id, []),
+        conviction_map.get(str(theory.theory_key)),
     )
 
 
@@ -778,7 +799,8 @@ async def observe_tripwire(
     await _require_project(project_id, session)
     try:
         row = await adversary_service.record_observation(
-            session, project_id, tripwire_id, observed=req.observed, note=req.note
+            session, project_id, tripwire_id, observed=req.observed, note=req.note,
+            likelihood_ratio=req.likelihood_ratio,
         )
     except LookupError as exc:
         await session.rollback()

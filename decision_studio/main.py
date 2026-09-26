@@ -89,7 +89,7 @@ async def health():
 
 
 # API routers
-from decision_studio.api.routes import analysis, graph, scenarios, export, operations, causal_analysis, events, reasoning, intake  # noqa: E402
+from decision_studio.api.routes import analysis, graph, scenarios, export, operations, causal_analysis, events, reasoning, intake, theory_value  # noqa: E402
 
 app.include_router(analysis.router)
 app.include_router(graph.router)
@@ -100,6 +100,7 @@ app.include_router(causal_analysis.router)
 app.include_router(events.router)
 app.include_router(reasoning.router)
 app.include_router(intake.router)
+app.include_router(theory_value.router)
 
 
 # --- Frontend ---------------------------------------------------------------
