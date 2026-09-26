@@ -187,12 +187,15 @@ def build_comparison(
     *,
     runs: int = DEFAULT_RUNS,
     priorities: dict[str, str] | None = None,
+    explain: bool = True,
 ) -> OptionComparison:
     """The comparison, from a propagation-ready graph and the reviewed claims.
 
     Args:
         priorities: outcome key -> importance, as the decider set them. Missing
             criteria take the default (decision_priorities.DEFAULT_IMPORTANCE).
+        explain: rank the drivers too. Off for callers that only need the
+            outcomes under a variant of the graph (scenarios, sub-decisions).
     """
     options = list((anchor or {}).get("options", []))
     outcome_labels = {o["key"]: o["label"] for o in (anchor or {}).get("outcomes", [])}
@@ -275,8 +278,23 @@ def build_comparison(
     # equal-weight ranking compare_options falls back to would be a hidden score.
 
     comparison.robustness = _robustness(comparison, forecasts, outcome_nodes)
-    _explain_drivers(comparison, graph, graphs, outcome_nodes, weights_by_key, claims)
+    if explain:
+        _explain_drivers(comparison, graph, graphs, outcome_nodes, weights_by_key, claims)
     return comparison
+
+
+def outcome_node_map(claims: list[Any], anchor: dict[str, Any] | None, graph: nx.DiGraph) -> dict[str, str]:
+    """Outcome key (Y1..) -> the graph node that stands for it."""
+    labels = {o["key"] for o in (anchor or {}).get("outcomes", [])}
+    nodes: dict[str, str] = {}
+    for claim in claims:
+        if getattr(claim, "decision_role", None) != ROLE_OUTCOME or getattr(claim, "origin", None) != ORIGIN_FRAME:
+            continue
+        metadata = getattr(claim, "metadata_", None) or {}
+        for key in [metadata.get("anchor_key")] + list(getattr(claim, "bears_on", None) or []):
+            if key in labels and str(claim.id) in graph:
+                nodes.setdefault(key, str(claim.id))
+    return nodes
 
 
 def _robustness(comparison: OptionComparison, forecasts: dict, outcome_nodes: dict[str, str]) -> list[dict[str, Any]]:

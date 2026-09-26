@@ -43,6 +43,8 @@ class ConvictionStepResponse(BaseModel):
     event: str | None = None
     #: Another observation of the same event is the one counted.
     duplicate_of: str | None = None
+    #: Descriptive labels (recent, independent, decisive, ...): reasoning/evidence_quality.py
+    quality: list[dict[str, str]] = []
 
 
 class ConvictionResponse(BaseModel):
@@ -119,6 +121,38 @@ def _hypothesis(row: LinkHypothesis) -> HypothesisResponse:
     )
 
 
+async def _conviction_response(session: AsyncSession, conviction: theory_value.Conviction) -> ConvictionResponse:
+    """The conviction with quality labels on each observation.
+
+    Decisiveness lives on the tripwire or link test an observation came from,
+    so it is looked up here rather than copied onto the belief row.
+    """
+    from sqlalchemy import select
+
+    from decision_studio.db.models import TheoryTripwire
+    from decision_studio.reasoning.evidence_quality import observation_labels
+
+    ids = {s.source: [] for s in conviction.steps}
+    for step in conviction.steps:
+        if step.source_id:
+            ids[step.source].append(UUID(step.source_id))
+    levels: dict[str, str] = {}
+    if ids.get("tripwire"):
+        for row in (await session.execute(
+            select(TheoryTripwire.id, TheoryTripwire.decisiveness).where(TheoryTripwire.id.in_(ids["tripwire"]))
+        )).all():
+            levels[str(row[0])] = theory_value.decisiveness_of(row[1])
+    if ids.get("link_hypothesis"):
+        for row in (await session.execute(
+            select(LinkHypothesis.id, LinkHypothesis.decisiveness).where(LinkHypothesis.id.in_(ids["link_hypothesis"]))
+        )).all():
+            levels[str(row[0])] = theory_value.decisiveness_of(row[1])
+    payload = conviction.as_dict()
+    for step, raw in zip(conviction.steps, payload["steps"]):
+        raw["quality"] = observation_labels(step, decisiveness=levels.get(step.source_id or ""))
+    return ConvictionResponse(**payload)
+
+
 async def _require_project(project_id: UUID, session: AsyncSession) -> None:
     if await session.get(Project, project_id) is None:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -139,7 +173,7 @@ async def get_conviction(
     """A theory's conviction and the evidence that moved it."""
     await _require_project(project_id, session)
     found = await theory_value.convictions(session, project_id, [theory_key])
-    return ConvictionResponse(**found[str(theory_key)].as_dict())
+    return await _conviction_response(session, found[str(theory_key)])
 
 
 @router.post(
@@ -160,7 +194,7 @@ async def state_prior(
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return ConvictionResponse(**conviction.as_dict())
+    return await _conviction_response(session, conviction)
 
 
 class EventListResponse(BaseModel):
@@ -392,9 +426,22 @@ async def set_decision_priorities(
     unknown = sorted(set(req.priorities) - set(known))
     if unknown:
         raise HTTPException(status_code=422, detail=f"Unknown success criteria: {', '.join(unknown)}")
-    project.outcome_priorities = clean_priorities(req.priorities, known) or None
+    from decision_studio.reasoning import decision_timeline
+    from decision_studio.reasoning.decision_priorities import DEFAULT_IMPORTANCE
+
+    before = clean_priorities(project.outcome_priorities, known)
+    after = clean_priorities(req.priorities, known)
+    project.outcome_priorities = after or None
     await session.commit()
+    changed = [
+        f"{key} {before.get(key, DEFAULT_IMPORTANCE)} → {after.get(key, DEFAULT_IMPORTANCE)}"
+        for key in known if before.get(key, DEFAULT_IMPORTANCE) != after.get(key, DEFAULT_IMPORTANCE)
+    ]
+    if changed:
+        await decision_timeline.record(session, project_id, "priorities",
+                                       "Decision priorities changed", "; ".join(changed))
     comparison = await option_comparison.compare_project_options(session, project_id)
+    await decision_timeline.record_comparison_if_changed(session, project_id, comparison)
     return OptionComparisonResponse(**comparison.as_dict())
 
 
@@ -408,8 +455,13 @@ async def compare_options(
     Pure computation on the reviewed graph: no model call. Repeated with the
     link weights shaken, so each option also gets a win rate.
     """
+    from decision_studio.reasoning import decision_timeline
+
     await _require_project(project_id, session)
     comparison = await option_comparison.compare_project_options(session, project_id)
+    # The only history the comparison has: a journal entry when what it
+    # implies has moved materially since it was last seen.
+    await decision_timeline.record_comparison_if_changed(session, project_id, comparison)
     return OptionComparisonResponse(**comparison.as_dict())
 
 

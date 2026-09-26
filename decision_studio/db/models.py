@@ -68,6 +68,11 @@ class Project(Base):
         comment="The decider's own account of comparable past decisions and how "
                 "they went. Base rates are read from it (reference_case).",
     )
+    sub_decisions: Mapped[list | None] = mapped_column(
+        JSON, nullable=True,
+        comment="Sub-decisions under an option, each with choices defined by existing "
+                "claims. See reasoning/sub_decisions.py.",
+    )
     outcome_priorities: Mapped[dict | None] = mapped_column(
         JSON, nullable=True,
         comment="Outcome key (Y1..) -> importance (critical, high, medium, low, none): "
@@ -358,6 +363,14 @@ class Scenario(Base):
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     edge_overrides: Mapped[dict] = mapped_column(JSON, default=dict)
+    decision_case: Mapped[str | None] = mapped_column(
+        String(20), nullable=True,
+        comment="upside or downside: the decider's assumptions for that case of the "
+                "option comparison (reasoning/decision_scenarios.py). Null for forks.",
+    )
+    claim_overrides: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True, comment="Claim id -> prior, for decision cases.",
+    )
     injected_events: Mapped[list] = mapped_column(JSON, default=list)
     narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
     key_insights: Mapped[list | None] = mapped_column(JSON, nullable=True)

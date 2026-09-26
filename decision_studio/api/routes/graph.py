@@ -35,6 +35,7 @@ from decision_studio.graph.anchoring import (
 )
 from decision_studio.graph.belief_propagation import propagate_beliefs
 from decision_studio.graph.shared_causes import dependence_report
+from decision_studio.reasoning.evidence_quality import document_labels
 from decision_studio.graph.stability import belief_intervals
 from decision_studio.graph.critical_path import find_critical_path
 from decision_studio.graph.edge_weight import inflation as edge_inflation
@@ -265,6 +266,7 @@ def _assemble_graph_response(
                 source_tier=getattr(ev, "source_tier", 4) or 4,
                 freshness_score=getattr(ev, "freshness_score", 0.5) or 0.5,
                 published_date=getattr(ev, "published_date", None),
+                quality=document_labels(ev, edge.evidences),
             )
             for ev in edge.evidences
         ]
@@ -488,6 +490,7 @@ async def update_edge(
             source_tier=getattr(ev, "source_tier", 4) or 4,
             freshness_score=getattr(ev, "freshness_score", 0.5) or 0.5,
             published_date=getattr(ev, "published_date", None),
+            quality=document_labels(ev, edge.evidences),
         )
         for ev in edge.evidences
     ]

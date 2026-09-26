@@ -140,7 +140,9 @@ async def list_scenarios(
         raise HTTPException(status_code=404, detail="Project not found")
 
     result = await session.execute(
-        select(Scenario).where(Scenario.project_id == project_id)
+        # Decision cases (upside/downside assumptions) share the table but are
+        # not forks; they are listed by reasoning/decision_scenarios.py.
+        select(Scenario).where(Scenario.project_id == project_id, Scenario.decision_case.is_(None))
     )
     scenarios = result.scalars().all()
 

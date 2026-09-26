@@ -68,6 +68,8 @@ class EvidenceResponse(BaseModel):
     source_tier: int = 4
     freshness_score: float = 0.5
     published_date: datetime | None = None
+    #: Descriptive labels (recent, independent, direct, ...): reasoning/evidence_quality.py
+    quality: list[dict[str, str]] = []
 
 
 class EdgeResponse(BaseModel):
