@@ -56,7 +56,9 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from decision_studio.reasoning.brief_view import BriefView, build_view, pct, quality_lines
+from decision_studio.reasoning.brief_view import (
+    BriefView, build_view, outside_view_note, pct, quality_lines,
+)
 from decision_studio.reasoning.calibration import band
 
 logger = logging.getLogger(__name__)
@@ -250,9 +252,10 @@ def _theory_block(theory, data: dict[str, Any], index: int, S) -> list:
         out.append(Paragraph("WEAK ASSUMPTIONS", S["h3"]))
         out.append(_bullets(list(theory.weak_assumptions), S["body"]))
 
-    if theory.outside_view_note:
+    outside = outside_view_note(theory, data)
+    if outside:
         out.append(Paragraph("AGAINST COMPARABLE CASES", S["h3"]))
-        out.append(Paragraph(_escape(theory.outside_view_note), S["body"]))
+        out.append(Paragraph(_escape(outside), S["body"]))
 
     if tripwires:
         out.append(Paragraph("WHAT WOULD PROVE THIS WRONG", S["h3"]))

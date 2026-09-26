@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Any
 
 from decision_studio.reasoning.calibration import band
+from decision_studio.reasoning.outside_view import current_comparison
 
 BAND_LABELS = {
     "very_low": "very low",
@@ -42,6 +43,12 @@ def band_label(value: float | None) -> str:
 
 def pct(value: float | None) -> str:
     return "—" if value is None else f"{round(value * 100)}%"
+
+
+def outside_view_note(theory: Any, data: dict[str, Any]) -> str | None:
+    """The comparable-cases note, against the decider's conviction as it is now."""
+    conviction = data.get("convictions", {}).get(str(theory.theory_key))
+    return current_comparison(theory, conviction.current if conviction else None)[1]
 
 
 @dataclass

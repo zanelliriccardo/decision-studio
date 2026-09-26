@@ -51,7 +51,9 @@ from decision_studio.reasoning.effective_graph import filter_effective
 from decision_studio.reasoning.link_tests import list_hypotheses
 from decision_studio.reasoning.theory_value import convictions
 from decision_studio.tools.anchor_report import compute_report
-from decision_studio.reasoning.brief_view import TestItem, TheoryLine, build_view, pct, quality_lines
+from decision_studio.reasoning.brief_view import (
+    TestItem, TheoryLine, build_view, outside_view_note, pct, quality_lines,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -263,8 +265,9 @@ def _theory_section(
         lines += [f"- {a}" for a in theory.weak_assumptions]
         lines.append("")
 
-    if theory.outside_view_note:
-        lines += ["#### Against comparable cases", "", theory.outside_view_note, ""]
+    outside = outside_view_note(theory, data)
+    if outside:
+        lines += ["#### Against comparable cases", "", outside, ""]
 
     pending = [t for t in tripwires if t.status == "pending"]
     if pending:

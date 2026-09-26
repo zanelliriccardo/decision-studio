@@ -41,6 +41,7 @@ from decision_studio.api.models.reasoning import (
     ExperimentListResponse,
     ExperimentResponse_,
     InferLinksResponse,
+    OutsideViewRequest,
     OutsideViewResponse,
     PersonaResponse,
     RecomputePlanResponse,
@@ -165,6 +166,11 @@ def _theory_response(
             **step, gap_before=is_claim and previous_was_claim
         ))
         previous_was_claim = is_claim
+    # Recomputed on every read: the comparison is against the decider's
+    # conviction, which moves with every observation.
+    outside_delta, outside_note = outside_view_service.current_comparison(
+        theory, conviction.current if conviction else None
+    )
     return TheoryResponse(
         id=theory.id,
         project_id=theory.project_id,
@@ -198,8 +204,8 @@ def _theory_response(
         adjusted_score=theory.adjusted_score,
         objections=objections or [],
         tripwires=tripwires or [],
-        outside_view_delta=theory.outside_view_delta,
-        outside_view_note=theory.outside_view_note,
+        outside_view_delta=outside_delta,
+        outside_view_note=outside_note,
         option_key=getattr(theory, "option_key", None),
         predicted_effect=getattr(theory, "predicted_effect", None),
         outcome_keys=list(getattr(theory, "outcome_keys", None) or []),
@@ -800,7 +806,7 @@ async def observe_tripwire(
     try:
         row = await adversary_service.record_observation(
             session, project_id, tripwire_id, observed=req.observed, note=req.note,
-            likelihood_ratio=req.likelihood_ratio,
+            likelihood_ratio=req.likelihood_ratio, event=req.event,
         )
     except LookupError as exc:
         await session.rollback()
@@ -867,20 +873,34 @@ async def dismiss_objection(
 # ---------------------------------------------------------------------------
 
 
-# DEAD-CODE-CANDIDATE DC-29 (orphaned feature, recommend wiring rather than deleting): no screen collects the recollection this needs, so the outside view never runs from the UI. See docs/DEAD_CODE_REPORT.md
+def _case_response(c) -> ReferenceCaseResponse:
+    return ReferenceCaseResponse(
+        id=c.id,
+        outcome=c.outcome,
+        cases_total=c.cases_total,
+        cases_with_outcome=c.cases_with_outcome,
+        base_rate=c.base_rate,
+        basis=c.basis,
+        source=c.source,
+    )
+
+
 @router.post("/graph/{project_id}/outside-view", response_model=OutsideViewResponse)
 async def run_outside_view(
     project_id: UUID,
+    req: OutsideViewRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> OutsideViewResponse:
-    """Extract base rates from the user's recollection and check theories against them.
+    """Read base rates from the decider's recollection and check theories against them.
 
     The inside view is what the uploaded documents describe. This is the only
     outside view a one-off decision has, and it is usually the better predictor.
     """
-    await _require_project(project_id, session)
+    project = await _require_project(project_id, session)
     try:
-        cases = await outside_view_service.extract_reference_cases(session, project_id)
+        cases = await outside_view_service.extract_reference_cases(
+            session, project_id, req.recollection if req else None
+        )
         report = await outside_view_service.check_theories_against_base_rates(
             session, project_id
         )
@@ -889,19 +909,10 @@ async def run_outside_view(
         logger.exception("Outside view failed for project %s", project_id)
         raise HTTPException(status_code=502, detail=f"Outside view failed: {exc}") from exc
 
+    await session.refresh(project)
     return OutsideViewResponse(
-        cases=[
-            ReferenceCaseResponse(
-                id=c.id,
-                outcome=c.outcome,
-                cases_total=c.cases_total,
-                cases_with_outcome=c.cases_with_outcome,
-                base_rate=c.base_rate,
-                basis=c.basis,
-                source=c.source,
-            )
-            for c in cases
-        ],
+        recollection=project.outside_view_recollection,
+        cases=[_case_response(c) for c in cases],
         checked=report["checked"],
         diverging=report["diverging"],
     )
@@ -912,22 +923,12 @@ async def get_outside_view(
     project_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> OutsideViewResponse:
-    """Base rates already extracted for this project."""
-    await _require_project(project_id, session)
+    """The decider's recollection and the base rates read from it."""
+    project = await _require_project(project_id, session)
     cases = await outside_view_service.list_reference_cases(session, project_id)
     return OutsideViewResponse(
-        cases=[
-            ReferenceCaseResponse(
-                id=c.id,
-                outcome=c.outcome,
-                cases_total=c.cases_total,
-                cases_with_outcome=c.cases_with_outcome,
-                base_rate=c.base_rate,
-                basis=c.basis,
-                source=c.source,
-            )
-            for c in cases
-        ]
+        recollection=project.outside_view_recollection,
+        cases=[_case_response(c) for c in cases],
     )
 
 

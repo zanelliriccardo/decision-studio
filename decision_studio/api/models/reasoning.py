@@ -309,6 +309,9 @@ class ObservationRequest(BaseModel):
     #: How much more likely this outcome is if the theory holds. Omitted, the
     #: tripwire's direction supplies a default (reasoning/theory_value.py).
     likelihood_ratio: float | None = Field(None, gt=0, le=20)
+    #: The real-world event this observation came from. Observations of one
+    #: event count once per theory (reasoning/theory_value.replay).
+    event: str | None = Field(None, max_length=200)
 
 
 class ReferenceCaseResponse(BaseModel):
@@ -323,7 +326,18 @@ class ReferenceCaseResponse(BaseModel):
     source: str = "user_recall"
 
 
+class OutsideViewRequest(BaseModel):
+    """The decider's own account of comparable past decisions.
+
+    Omitted, the account saved on the project is re-read (e.g. after the
+    theories were regenerated). Empty clears it and its base rates.
+    """
+
+    recollection: str | None = Field(None, max_length=4000)
+
+
 class OutsideViewResponse(BaseModel):
+    recollection: str | None = None
     cases: list[ReferenceCaseResponse] = []
     checked: int = 0
     diverging: int = 0

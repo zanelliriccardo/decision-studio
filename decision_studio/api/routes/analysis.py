@@ -370,11 +370,14 @@ async def _generate_downstream(
     # anything that could prove them wrong — which also left the decider's
     # conviction with no observations to move it. Each in its own session: a
     # failed critique must not roll back theories.
-    from decision_studio.reasoning import adversary
+    from decision_studio.reasoning import adversary, outside_view
 
     for stage, step in (
         ("adversary", adversary.challenge_theories),
         ("tripwires", adversary.generate_tripwires),
+        # New theory rows carry no match against the decider's comparable
+        # cases. No model call when there are none.
+        ("outside_view", outside_view.check_theories_against_base_rates),
     ):
         async with async_session() as session:
             try:

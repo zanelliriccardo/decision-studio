@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import EventField from '../theory/EventField.tsx'
 import {
   AlertTriangle, ChevronDown, ChevronRight, CircleHelp, Crosshair, FileWarning,
   GitBranch, Lightbulb, Loader2, RefreshCw, Scale, ShieldCheck,
@@ -98,7 +99,7 @@ interface TheoryCardProps {
   selected: boolean
   onSelect: (theory: Theory | null) => void
   onDismissObjection?: (objectionId: string) => void
-  onObserveTripwire?: (tripwireId: string, observed: boolean) => void
+  onObserveTripwire?: (tripwireId: string, observed: boolean, event?: string) => void
   onTheoriesChanged?: () => void
 }
 
@@ -108,6 +109,7 @@ function TheoryCard({
 }: TheoryCardProps) {
   const { t } = useT()
   const [expanded, setExpanded] = useState(false)
+  const [tripwireEvent, setTripwireEvent] = useState('')
 
   const evidence = useMemo(() => {
     if (!graph) return { supporting: [], contradicting: [] }
@@ -385,6 +387,15 @@ function TheoryCard({
                   {t.tripwires.title}
                 </h5>
                 <p className="text-[10px] text-text-muted mb-1.5">{t.tripwires.hint}</p>
+                {onObserveTripwire && theory.tripwires.some((tw) => tw.status === 'pending') && (
+                  <div className="mb-1.5">
+                    <EventField
+                      projectId={theory.projectId}
+                      value={tripwireEvent}
+                      onChange={setTripwireEvent}
+                    />
+                  </div>
+                )}
                 <ul className="space-y-1.5">
                   {theory.tripwires.map((tripwire) => (
                     <li
@@ -407,14 +418,14 @@ function TheoryCard({
                           <>
                             <button
                               type="button"
-                              onClick={() => onObserveTripwire(tripwire.id, true)}
+                              onClick={() => onObserveTripwire(tripwire.id, true, tripwireEvent)}
                               className="text-[9px] px-1.5 py-0.5 rounded bg-surface-700 text-text-secondary border border-surface-600 hover:bg-surface-600 transition-colors"
                             >
                               {t.tripwires.happened}
                             </button>
                             <button
                               type="button"
-                              onClick={() => onObserveTripwire(tripwire.id, false)}
+                              onClick={() => onObserveTripwire(tripwire.id, false, tripwireEvent)}
                               className="text-[9px] px-1.5 py-0.5 rounded bg-surface-700 text-text-secondary border border-surface-600 hover:bg-surface-600 transition-colors"
                             >
                               {t.tripwires.didNotHappen}
@@ -481,7 +492,7 @@ interface TheoryPanelProps {
   onGenerateTripwires?: () => void
   onRunOutsideView?: () => void
   onDismissObjection?: (objectionId: string) => void
-  onObserveTripwire?: (tripwireId: string, observed: boolean) => void
+  onObserveTripwire?: (tripwireId: string, observed: boolean, event?: string) => void
   /** Reload the theory list after a recorded result changes it (e.g. marks it stale). */
   onTheoriesChanged?: () => void
   /** Required framing answers still missing. Reported, never enforced: the

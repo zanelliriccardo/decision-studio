@@ -85,6 +85,10 @@ theory's conclusion IS that the schedule slips.
 nearest available class would produce a comparison the numbers do not support.
 - A reference class may match several theories, or none.
 - Do not judge whether the theory is right. Only whether it is about that outcome.
+- polarity: "same" when the theory's conclusion is that the reference outcome \
+happens (the base rate is "the schedule slipped" and the theory says it will \
+slip); "opposite" when its conclusion is that it does not happen (the theory \
+says the date will be met).
 - Give a one-line reason for each match.
 
 Return JSON."""
@@ -107,12 +111,18 @@ OUTSIDE_VIEW_MATCH_SCHEMA = {
                         "type": "string",
                         "description": "The reference class tag, e.g. 'R0'.",
                     },
+                    "polarity": {
+                        "type": "string",
+                        "enum": ["same", "opposite"],
+                        "description": "Whether the theory predicts the reference "
+                        "outcome (same) or its absence (opposite).",
+                    },
                     "reason": {
                         "type": "string",
                         "description": "One line on why these are about the same outcome.",
                     },
                 },
-                "required": ["theory_ref", "reference_ref", "reason"],
+                "required": ["theory_ref", "reference_ref", "polarity", "reason"],
                 "additionalProperties": False,
             },
         }

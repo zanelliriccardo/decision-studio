@@ -511,6 +511,12 @@ async def generate_theories(
             .where(Experiment.theory_id == previous_theory.id, Experiment.kind == "field")
             .values(theory_id=successor.id)
         )
+        # Same option, same predicted effect (see _same_claim), so the match
+        # against the decider's comparable cases still holds, polarity included.
+        successor.outside_view_case = previous_theory.outside_view_case
+        successor.outside_view_polarity = previous_theory.outside_view_polarity
+        successor.outside_view_delta = previous_theory.outside_view_delta
+        successor.outside_view_note = previous_theory.outside_view_note
 
     # Retire previous versions, and mark genuinely dropped theories superseded.
     for previous_theory in previous:

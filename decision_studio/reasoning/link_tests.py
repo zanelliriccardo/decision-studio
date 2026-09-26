@@ -236,6 +236,7 @@ async def record_result(
     *,
     likelihood_ratio: float | None = None,
     note: str | None = None,
+    event: str | None = None,
 ) -> LinkHypothesis:
     """Record what testing a link found, as evidence against the theory's conviction.
 
@@ -261,6 +262,7 @@ async def record_result(
         likelihood_ratio if likelihood_ratio is not None else DEFAULT_RESULT_LR[result],
         source="link_hypothesis", source_id=row.id,
         note=f"Link {result}: {row.statement}",
+        event=event,
         commit=False,
     )
     if result == "refuted":

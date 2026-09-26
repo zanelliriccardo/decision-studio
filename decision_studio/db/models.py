@@ -63,6 +63,11 @@ class Project(Base):
         comment="What decision the user is trying to make. Steers theory and "
                 "theory generation.",
     )
+    outside_view_recollection: Mapped[str | None] = mapped_column(
+        Text, nullable=True,
+        comment="The decider's own account of comparable past decisions and how "
+                "they went. Base rates are read from it (reference_case).",
+    )
     decision_anchor: Mapped[dict | None] = mapped_column(
         JSON, nullable=True,
         comment="The decision in a form the pipeline can steer by: decision, "
@@ -666,6 +671,15 @@ class Theory(Base):
     outside_view_note: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="Which reference class was matched, and why."
     )
+    outside_view_case_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("reference_case.id", ondelete="SET NULL"),
+        nullable=True, comment="The reference case this theory was matched to.",
+    )
+    outside_view_polarity: Mapped[str | None] = mapped_column(
+        String(10), nullable=True,
+        comment="same: the theory predicts the reference case's outcome; "
+                "opposite: it predicts that outcome does not happen.",
+    )
     adjusted_score: Mapped[float | None] = mapped_column(
         Float, nullable=True,
         comment="confidence discounted by objection_load. This is what the panel "
@@ -695,6 +709,9 @@ class Theory(Base):
     claim_links: Mapped[list["TheoryClaim"]] = relationship(
         back_populates="theory", cascade="all, delete-orphan"
     )
+    #: Loaded with the theory so the comparison can be recomputed against the
+    #: decider's current conviction (reasoning/outside_view.current_comparison).
+    outside_view_case: Mapped["ReferenceCase | None"] = relationship(lazy="selectin")
     edge_links: Mapped[list["TheoryEdge"]] = relationship(
         back_populates="theory", cascade="all, delete-orphan"
     )
@@ -798,6 +815,11 @@ class TheoryTripwire(Base):
         String(20), default="pending",
         comment="pending, observed, not_observed or expired",
     )
+    decisiveness: Mapped[str | None] = mapped_column(
+        String(10), nullable=True,
+        comment="weak, moderate or decisive: how much the decider said in advance "
+                "this observation would count. Null reads as moderate.",
+    )
     observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     observed_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -839,6 +861,11 @@ class TheoryBelief(Base):
     method: Mapped[str | None] = mapped_column(
         String(20), nullable=True, comment="lottery or direct, for a prior."
     )
+    event: Mapped[str | None] = mapped_column(
+        String(200), nullable=True,
+        comment="The real-world event this observation came from. Observations "
+                "sharing an event count once: see theory_value.replay.",
+    )
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -873,6 +900,10 @@ class LinkHypothesis(Base):
     status: Mapped[str] = mapped_column(
         String(20), default="open", server_default="open",
         comment="open, held, refuted or inconclusive",
+    )
+    decisiveness: Mapped[str | None] = mapped_column(
+        String(10), nullable=True,
+        comment="weak, moderate or decisive, stated before the test. Null reads as moderate.",
     )
     observed_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

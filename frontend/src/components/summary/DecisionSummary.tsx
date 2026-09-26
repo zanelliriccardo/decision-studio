@@ -16,6 +16,7 @@ import OptionCoverageStrip from '../theory/OptionCoverageStrip.tsx'
 import { draftDecisionAnchor, toAnchor } from '../../lib/decisionAnchor.ts'
 import type { DecisionAnchor } from '../../types/graph.ts'
 import UsagePanel from './UsagePanel.tsx'
+import ComparableCases from './ComparableCases.tsx'
 
 /**
  * Where an analysis lands: the conclusions, written out.
@@ -514,6 +515,20 @@ export default function DecisionSummary() {
             </p>
           </section>
         </>
+      )}
+
+      {/* After the theories, because it is checked against them: each theory's
+          "compared with cases you have seen" note comes from here. */}
+      {projectId && ranked.length > 0 && (
+        <ComparableCases
+          projectId={projectId}
+          onChecked={() => {
+            void reasoningApi
+              .fetchTheories(projectId)
+              .then((loaded) => setTheories(loaded.theories))
+              .catch(() => undefined)
+          }}
+        />
       )}
 
       {/* Below the conclusions: operational information, not a finding. */}

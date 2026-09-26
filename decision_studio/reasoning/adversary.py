@@ -376,6 +376,7 @@ async def record_observation(
     observed: bool,
     note: str | None = None,
     likelihood_ratio: float | None = None,
+    event: str | None = None,
 ) -> TheoryTripwire:
     """Record whether a tripwire fired, and mark the theory accordingly.
 
@@ -416,6 +417,7 @@ async def record_observation(
             else tripwire_likelihood(row.direction, observed),
             source="tripwire", source_id=row.id,
             note=f"{'Observed' if observed else 'Not observed'}: {row.observable}",
+            event=event,
             commit=False,
         )
         falsified = observed and row.direction == "falsifies"

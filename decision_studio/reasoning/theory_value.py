@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from decision_studio.db.models import Theory, TheoryBelief
@@ -112,6 +112,10 @@ class ConvictionStep:
     created_at: Any
     applied: bool
     after: float | None
+    #: The real-world event this observation came from, when the decider named one.
+    event: str | None = None
+    #: Set when another observation of the same event is the one counted.
+    duplicate_of: str | None = None
 
 
 @dataclass
@@ -136,11 +140,51 @@ class Conviction:
         }
 
 
+def event_key(event: str | None) -> str | None:
+    """Normalised event label: two spellings of one event are one event."""
+    if not event:
+        return None
+    cleaned = " ".join(str(event).split()).strip()[:200]
+    return cleaned.casefold() or None
+
+
+def _counted_per_event(
+    evidence: list[TheoryBelief], latest_prior: TheoryBelief | None
+) -> dict[Any, Any]:
+    """For each observation sharing an event with others, the one that counts.
+
+    Two observations of one event are one piece of evidence: a tripwire "the
+    vendor misses 1 August" and a link test refuted by the same miss would
+    otherwise multiply the same likelihood ratio in twice. The strongest of them
+    (largest |log LR|, earliest on a tie) counts; the rest are shown but not
+    applied. If any of them predates the latest prior, the decider restated
+    their conviction knowing about the event, so none counts.
+
+    Returns ``{row id: counted row id or None}`` for rows in a shared event.
+    """
+    groups: dict[str, list[TheoryBelief]] = {}
+    for row in evidence:
+        key = event_key(getattr(row, "event", None))
+        if key:
+            groups.setdefault(key, []).append(row)
+    counted: dict[Any, Any] = {}
+    for group in groups.values():
+        if latest_prior is None or any(not _after(r, latest_prior) for r in group):
+            keeper = None
+        else:
+            keeper = max(group, key=lambda r: abs(math.log(clamp_lr(r.likelihood_ratio))))
+        for row in group:
+            counted[row.id] = keeper.id if keeper is not None else None
+    return counted
+
+
 def replay(theory_key: str, rows: list[TheoryBelief]) -> Conviction:
     """Recompute a conviction from its stored rows, oldest first."""
     ordered = sorted(rows, key=lambda r: (r.created_at is None, r.created_at))
     priors = [r for r in ordered if r.kind == "prior" and r.value is not None]
     latest = priors[-1] if priors else None
+    evidence = [r for r in ordered if r.kind == "evidence" and r.likelihood_ratio is not None]
+    per_event = _counted_per_event(evidence, latest)
 
     conviction = Conviction(theory_key=theory_key)
     if latest is not None:
@@ -149,10 +193,14 @@ def replay(theory_key: str, rows: list[TheoryBelief]) -> Conviction:
         conviction.prior_at = latest.created_at
         conviction.current = latest.value
 
-    for row in ordered:
-        if row.kind != "evidence" or row.likelihood_ratio is None:
-            continue
+    for row in evidence:
         applied = latest is not None and _after(row, latest)
+        duplicate_of = None
+        if row.id in per_event:
+            keeper = per_event[row.id]
+            applied = applied and keeper == row.id
+            if keeper is not None and keeper != row.id:
+                duplicate_of = str(keeper)
         if applied:
             conviction.current = bayes_update(conviction.current, [row.likelihood_ratio])
         conviction.steps.append(ConvictionStep(
@@ -164,6 +212,8 @@ def replay(theory_key: str, rows: list[TheoryBelief]) -> Conviction:
             created_at=row.created_at,
             applied=applied,
             after=conviction.current if applied else None,
+            event=getattr(row, "event", None),
+            duplicate_of=duplicate_of,
         ))
     return conviction
 
@@ -191,6 +241,17 @@ async def convictions(
     for row in rows:
         grouped[str(row.theory_key)].append(row)
     return {key: replay(key, group) for key, group in grouped.items()}
+
+
+async def known_events(session: AsyncSession, project_id: UUID) -> list[str]:
+    """Event labels already used in the project, so the same one can be picked again."""
+    rows = (await session.execute(
+        select(TheoryBelief.event, func.max(TheoryBelief.created_at))
+        .where(TheoryBelief.project_id == project_id, TheoryBelief.event.is_not(None))
+        .group_by(TheoryBelief.event)
+        .order_by(func.max(TheoryBelief.created_at).desc())
+    )).all()
+    return [row[0] for row in rows]
 
 
 async def _require_theory_key(session: AsyncSession, project_id: UUID, theory_key: UUID) -> None:
@@ -238,6 +299,7 @@ async def record_evidence(
     source: str,
     source_id: UUID | None = None,
     note: str | None = None,
+    event: str | None = None,
     commit: bool = True,
 ) -> None:
     """Record an observation's likelihood ratio against a theory.
@@ -268,6 +330,7 @@ async def record_evidence(
         source=source,
         source_id=source_id,
         note=(note or "").strip()[:2000] or None,
+        event=" ".join((event or "").split())[:200] or None,
     ))
     if commit:
         await session.commit()

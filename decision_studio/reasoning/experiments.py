@@ -423,6 +423,7 @@ async def record_field_result(
     *,
     likelihood_ratio: float | None = None,
     note: str | None = None,
+    event: str | None = None,
 ) -> Experiment:
     """Record what a field experiment found, and let it move conviction.
 
@@ -465,6 +466,7 @@ async def record_field_result(
             likelihood_ratio if likelihood_ratio is not None else DEFAULT_FIELD_LR[result],
             source="field_experiment", source_id=experiment.id,
             note=f"Field test {result}: {experiment.hypothesis}",
+            event=event,
             commit=False,
         )
     await session.commit()

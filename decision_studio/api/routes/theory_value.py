@@ -39,6 +39,10 @@ class ConvictionStepResponse(BaseModel):
     #: False for evidence recorded before the latest prior: already reflected in it.
     applied: bool
     after: float | None = None
+    #: The real-world event the observation came from, when one was named.
+    event: str | None = None
+    #: Another observation of the same event is the one counted.
+    duplicate_of: str | None = None
 
 
 class ConvictionResponse(BaseModel):
@@ -76,16 +80,23 @@ class HypothesisListResponse(BaseModel):
     hypotheses: list[HypothesisResponse] = []
 
 
+#: Names the real-world event an observation came from. Observations of one
+#: event count once per theory (reasoning/theory_value.replay).
+EventField = Field(None, max_length=200)
+
+
 class HypothesisResultRequest(BaseModel):
     result: Literal["held", "refuted", "inconclusive"]
     likelihood_ratio: float | None = Field(None, gt=0, le=20)
     note: str | None = Field(None, max_length=2000)
+    event: str | None = EventField
 
 
 class FieldResultRequest(BaseModel):
     result: Literal["supports", "refutes", "inconclusive"]
     likelihood_ratio: float | None = Field(None, gt=0, le=20)
     note: str | None = Field(None, max_length=2000)
+    event: str | None = EventField
 
 
 class FieldResultResponse(BaseModel):
@@ -150,6 +161,20 @@ async def state_prior(
     return ConvictionResponse(**conviction.as_dict())
 
 
+class EventListResponse(BaseModel):
+    events: list[str] = []
+
+
+@router.get("/graph/{project_id}/observation-events", response_model=EventListResponse)
+async def list_observation_events(
+    project_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> EventListResponse:
+    """Events already named on observations, most recent first, for reuse."""
+    await _require_project(project_id, session)
+    return EventListResponse(events=await theory_value.known_events(session, project_id))
+
+
 # --- Link hypotheses ---
 
 
@@ -203,7 +228,7 @@ async def record_hypothesis_result(
     try:
         row = await link_tests.record_result(
             session, project_id, hypothesis_id, req.result,
-            likelihood_ratio=req.likelihood_ratio, note=req.note,
+            likelihood_ratio=req.likelihood_ratio, note=req.note, event=req.event,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -228,7 +253,7 @@ async def record_field_result(
     try:
         experiment = await experiment_service.record_field_result(
             session, project_id, experiment_id, req.result,
-            likelihood_ratio=req.likelihood_ratio, note=req.note,
+            likelihood_ratio=req.likelihood_ratio, note=req.note, event=req.event,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

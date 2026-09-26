@@ -290,10 +290,12 @@ export async function observeTripwire(
   tripwireId: string,
   observed: boolean,
   note?: string,
+  event?: string,
 ): Promise<void> {
   await apiPost(`${base(projectId)}/tripwires/${tripwireId}/observe`, {
     observed,
     note,
+    event: event?.trim() || undefined,
   })
 }
 
@@ -621,4 +623,66 @@ export async function fetchUsage(projectId: string): Promise<AnalysisUsage | nul
   } catch {
     return null
   }
+}
+
+// --- Outside view: the decider's own comparable cases ---
+
+export interface ReferenceCase {
+  id: string
+  outcome: string
+  casesTotal: number
+  casesWithOutcome: number
+  baseRate: number
+  basis: string | null
+}
+
+export interface OutsideView {
+  recollection: string | null
+  cases: ReferenceCase[]
+  checked: number
+  diverging: number
+}
+
+interface OutsideViewApi {
+  recollection: string | null
+  cases: {
+    id: string
+    outcome: string
+    cases_total: number
+    cases_with_outcome: number
+    base_rate: number
+    basis: string | null
+  }[]
+  checked: number
+  diverging: number
+}
+
+function toOutsideView(res: OutsideViewApi): OutsideView {
+  return {
+    recollection: res.recollection ?? null,
+    cases: (res.cases ?? []).map((c) => ({
+      id: c.id,
+      outcome: c.outcome,
+      casesTotal: c.cases_total,
+      casesWithOutcome: c.cases_with_outcome,
+      baseRate: c.base_rate,
+      basis: c.basis ?? null,
+    })),
+    checked: res.checked ?? 0,
+    diverging: res.diverging ?? 0,
+  }
+}
+
+export async function fetchOutsideView(projectId: string): Promise<OutsideView> {
+  return toOutsideView(await apiGet<OutsideViewApi>(`${base(projectId)}/outside-view`))
+}
+
+/** Reads base rates from the recollection and checks every theory against them. */
+export async function runOutsideView(
+  projectId: string,
+  recollection: string,
+): Promise<OutsideView> {
+  return toOutsideView(
+    await apiPost<OutsideViewApi>(`${base(projectId)}/outside-view`, { recollection }),
+  )
 }

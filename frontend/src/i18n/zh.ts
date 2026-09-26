@@ -626,12 +626,6 @@ export const zh: Translations = {
     high: '高',
     very_high: '很高',
   },
-  outsideView: {
-    run: '对照过往案例',
-    title: '外部视角',
-    hint: '你经历过的同类决策实际结果如何。通常比本案例的具体细节更有预测力。',
-    diverges: '与你的实际经验不符',
-  },
   debate: {
     title: '理论对比',
     intro: '两个理论的分歧点在哪里，以及可以观察什么来判断哪个成立。重叠度由图谱计算得出，而非模型判断。',
@@ -782,6 +776,11 @@ export const zh: Translations = {
     hideHistory: '隐藏',
     noEvidence: '尚未观察到任何事实。',
     notApplied: '记录于你最近一次说明之前 —— 已包含在其中',
+    sameEvent: '与已计入的观察属于同一事件 —— 只计一次',
+    independentOf: '{total} 条观察，其中 {independent} 条相互独立',
+    eventLabel: '观察到的事件（可选）',
+    eventPlaceholder: '例如：供应商未在 8 月 1 日交付 API',
+    eventHint: '写明该结果来自哪个真实事件。指向同一事件的结果对该理论只计一次，避免同一事实被重复计算。',
     waiting: '等待你说明信念',
     sources: {
       tripwire: '触发条件',
@@ -866,6 +865,18 @@ export const zh: Translations = {
     howToReadBody: '置信度以区间显示而非百分比：这些分数从未针对实际结果做过校准，用小数会暗示并不存在的精度。因果关系由语言模型从你的文档推断得出，是被显性化的论证，不是测量结果。反对意见由对抗性生成，本身也可能有误 —— 之所以列出，是因为无人质疑过的论证等于未经检验。',
     inspectTheGraph: '查看推理过程',
     exportBrief: '导出为文档',
+  },
+  outsideView: {
+    run: '对照过往案例',
+    title: '你经历过的类似案例',
+    hint: '文件从内部描述了这个案例，而从内部看每个案例都显得特殊。你过去类似决策的结果通常是更好的参考。尽量给出数字：“最近 5 次公开承诺的上线日期中有 3 次延误”。',
+    placeholder: '例如：最近 5 次公开承诺的版本中，有 3 次延误超过一个月，其中 2 次导致一名资深工程师离职。',
+    check: '用这些案例检验理论',
+    checking: '正在读取你的案例…',
+    baseRates: '从中读取的基础比率',
+    noCases: '未找到可计数的案例。请说明有多少个案例，以及各自的结果。',
+    result: '{checked} 个理论匹配，其中 {diverging} 个与你的经验有明显差异。',
+    failed: '无法读取类似案例',
   },
   usage: {
     title: '本次分析的花费',

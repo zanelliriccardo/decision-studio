@@ -624,12 +624,6 @@ Supply side changes: Stack Overflow traffic down 55% YoY, junior developer hirin
     high: 'High',
     very_high: 'Very high',
   },
-  outsideView: {
-    run: 'Compare with past cases',
-    title: 'Outside view',
-    hint: 'How comparable decisions you have seen actually turned out. Usually a better predictor than the specifics of this case.',
-    diverges: 'Departs from your own experience',
-  },
   debate: {
     title: 'Comparisons',
     intro: 'What separates two theories, and what you could watch to find out which holds. Overlap is computed from the graph, not judged.',
@@ -780,6 +774,11 @@ Supply side changes: Stack Overflow traffic down 55% YoY, junior developer hirin
     hideHistory: 'Hide',
     noEvidence: 'Nothing observed yet.',
     notApplied: 'recorded before your latest statement — already reflected in it',
+    sameEvent: 'same event as an observation already counted — counted once',
+    independentOf: '{total} observations, {independent} independent',
+    eventLabel: 'Event observed (optional)',
+    eventPlaceholder: 'e.g. Vendor missed the 1 August API delivery',
+    eventHint: 'Name the real-world event this result comes from. Results naming the same event count once against this theory, so one fact is not counted twice.',
     waiting: 'waiting for you to state a conviction',
     sources: {
       tripwire: 'Tripwire',
@@ -864,6 +863,18 @@ Supply side changes: Stack Overflow traffic down 55% YoY, junior developer hirin
     howToReadBody: 'Confidence is shown as a band, not a percentage: nothing here has been calibrated against outcomes, so a decimal would imply precision this analysis does not have. The causal links were inferred by a language model from your documents and are an argument made explicit, not a measurement. Objections were generated adversarially and may themselves be wrong — they are included because an argument nobody has attacked has not been tested.',
     inspectTheGraph: 'Inspect the reasoning',
     exportBrief: 'Export as a document',
+  },
+  outsideView: {
+    run: 'Compare with past cases',
+    title: 'Your comparable cases',
+    hint: 'The documents describe this case from the inside, and every case feels exceptional from the inside. How similar decisions went for you is usually the better guide. Give numbers where you can: "3 of the last 5 public launch dates slipped".',
+    placeholder: 'e.g. Of the last 5 releases we committed to publicly, 3 slipped by more than a month, and 2 of those cost us a senior engineer.',
+    check: 'Check the theories against this',
+    checking: 'Reading your cases…',
+    baseRates: 'Base rates read from this',
+    noCases: 'No countable cases found. Say how many cases and how many went each way.',
+    result: '{checked} theory(ies) matched, {diverging} differ materially from your experience.',
+    failed: 'Could not read the comparable cases',
   },
   usage: {
     title: 'What this analysis cost',

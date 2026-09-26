@@ -7,6 +7,7 @@ import {
   fetchConviction,
   fetchFieldTests,
   fetchHypotheses,
+  independentCount,
   likelihoodKey,
   proposeHypotheses,
   recordFieldResult,
@@ -19,6 +20,7 @@ import {
 import type { DecisionAnchor } from '../../types/graph.ts'
 import type { Theory } from '../../types/reasoning.ts'
 import ConvictionElicitor from './ConvictionElicitor.tsx'
+import EventField from './EventField.tsx'
 
 const pct = (p: number | null | undefined) => (p == null ? '' : `${Math.round(p * 100)}%`)
 
@@ -51,6 +53,8 @@ export default function TheoryValueSection({
   const [hypotheses, setHypotheses] = useState<LinkHypothesis[] | null>(null)
   const [fieldTests, setFieldTests] = useState<FieldTest[] | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  // One per theory's tests: the results recorded next usually come from the same event.
+  const [event, setEvent] = useState('')
 
   const current = conviction?.current ?? theory.conviction ?? null
   const prior = conviction?.prior ?? theory.convictionPrior ?? null
@@ -188,14 +192,27 @@ export default function TheoryValueSection({
             {conviction.steps.length === 0 && (
               <li className="text-[10px] text-text-muted">{t.theoryValue.noEvidence}</li>
             )}
+            {(() => {
+              const { total, independent } = independentCount(conviction.steps)
+              return total > independent ? (
+                <li className="text-[10px] text-text-muted" data-testid="independent-count">
+                  {t.theoryValue.independentOf
+                    .replace('{total}', String(total))
+                    .replace('{independent}', String(independent))}
+                </li>
+              ) : null
+            })()}
             {conviction.steps.map((step) => (
               <li key={step.id} className="text-[10px] leading-snug">
                 <span className="text-text-secondary">
                   {t.theoryValue.sources[step.source as keyof typeof t.theoryValue.sources] ?? step.source}
                 </span>
                 <span className="text-text-muted"> · {t.theoryValue.likelihood[likelihoodKey(step.likelihoodRatio)]}</span>
+                {step.event && <span className="text-text-muted"> · “{step.event}”</span>}
                 {step.applied ? (
                   <span className="text-text-primary"> → {pct(step.after)}</span>
+                ) : step.duplicateOf ? (
+                  <span className="text-text-muted italic"> — {t.theoryValue.sameEvent}</span>
                 ) : (
                   <span className="text-text-muted italic">
                     {' '}— {conviction.prior == null ? t.theoryValue.waiting : t.theoryValue.notApplied}
@@ -221,6 +238,7 @@ export default function TheoryValueSection({
 
       {testsOpen && (
         <div className="space-y-3 pl-1">
+          <EventField projectId={projectId} value={event} onChange={setEvent} />
           <section className="space-y-1.5" data-testid="link-hypotheses">
             <h5 className="flex items-center gap-1.5 text-[10px] font-semibold text-text-muted">
               <Split className="w-3 h-3" aria-hidden="true" />
@@ -257,7 +275,7 @@ export default function TheoryValueSection({
                         disabled={busy !== null}
                         onClick={() =>
                           void run(h.id, async () => {
-                            const updated = await recordHypothesisResult(projectId, h.id, result)
+                            const updated = await recordHypothesisResult(projectId, h.id, result, undefined, undefined, event)
                             setHypotheses((prev) => (prev ?? []).map((x) => (x.id === h.id ? updated : x)))
                             await refreshConviction()
                             toast.success(t.theoryValue.resultRecorded)
@@ -324,7 +342,7 @@ export default function TheoryValueSection({
                         disabled={busy !== null}
                         onClick={() =>
                           void run(f.id, async () => {
-                            await recordFieldResult(projectId, f.id, result)
+                            await recordFieldResult(projectId, f.id, result, undefined, event)
                             setFieldTests(await fetchFieldTests(projectId, theory.id))
                             await refreshConviction()
                             toast.success(t.theoryValue.resultRecorded)

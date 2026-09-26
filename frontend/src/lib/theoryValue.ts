@@ -114,6 +114,10 @@ export interface ConvictionStep {
   /** False when recorded before the latest prior: already reflected in it. */
   applied: boolean
   after: number | null
+  /** The real-world event the observation came from, when one was named. */
+  event: string | null
+  /** Set when another observation of the same event is the one counted. */
+  duplicateOf: string | null
 }
 
 export interface Conviction {
@@ -132,6 +136,7 @@ interface ApiConviction {
   steps: Array<{
     id: string; likelihood_ratio: number; source: string; note: string | null
     created_at: string | null; applied: boolean; after: number | null
+    event?: string | null; duplicate_of?: string | null
   }>
 }
 
@@ -143,6 +148,7 @@ const toConviction = (api: ApiConviction): Conviction => ({
   steps: api.steps.map((s) => ({
     id: s.id, likelihoodRatio: s.likelihood_ratio, source: s.source, note: s.note,
     createdAt: s.created_at, applied: s.applied, after: s.after,
+    event: s.event ?? null, duplicateOf: s.duplicate_of ?? null,
   })),
 })
 
@@ -204,11 +210,11 @@ export async function proposeHypotheses(projectId: string, theoryId: string): Pr
 
 export async function recordHypothesisResult(
   projectId: string, hypothesisId: string, result: 'held' | 'refuted' | 'inconclusive',
-  likelihoodRatio?: number, note?: string,
+  likelihoodRatio?: number, note?: string, event?: string,
 ): Promise<LinkHypothesis> {
   return toHypothesis(await apiPost<ApiHypothesis>(
     `/api/v1/graph/${projectId}/hypotheses/${hypothesisId}/result`,
-    { result, likelihood_ratio: likelihoodRatio, note },
+    { result, likelihood_ratio: likelihoodRatio, note, event: event?.trim() || undefined },
   ))
 }
 
@@ -252,7 +258,26 @@ export async function designFieldTest(projectId: string, theoryId: string): Prom
 
 export async function recordFieldResult(
   projectId: string, experimentId: string, result: 'supports' | 'refutes' | 'inconclusive',
-  note?: string,
+  note?: string, event?: string,
 ): Promise<void> {
-  await apiPost(`/api/v1/graph/${projectId}/experiments/${experimentId}/result`, { result, note })
+  await apiPost(`/api/v1/graph/${projectId}/experiments/${experimentId}/result`, {
+    result, note, event: event?.trim() || undefined,
+  })
+}
+
+/** Event labels already used on observations in this project, most recent first. */
+export async function fetchObservationEvents(projectId: string): Promise<string[]> {
+  const res = await apiGet<{ events: string[] }>(`/api/v1/graph/${projectId}/observation-events`)
+  return res.events ?? []
+}
+
+/**
+ * How many of a theory's counted observations are independent: observations of
+ * one event count once, so "3 observations, 2 independent" says why the third
+ * did not move the number.
+ */
+export function independentCount(steps: ConvictionStep[]): { total: number; independent: number } {
+  const total = steps.length
+  const independent = steps.filter((s) => s.duplicateOf === null).length
+  return { total, independent }
 }
