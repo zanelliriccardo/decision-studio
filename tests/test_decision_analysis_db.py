@@ -82,5 +82,21 @@ async def test_what_would_change_my_mind_uses_existing_signals(session):
     assert q3.theories[0].title == VENDOR and q3.theories[0].conviction == pytest.approx(0.68)
     (signal,) = [s for s in q3.weaken if s.kind == "tripwire"]
     assert signal.id == str(tripwire.id) and signal.decisiveness == "decisive"
-    assert signal.status == "not_observed" and not signal.resolved
+    assert signal.status == "pending" and not signal.resolved
     assert q3.strengthen == [] or all(s.kind != "tripwire" for s in q3.strengthen)
+
+
+async def test_the_report_carries_the_decision_view(session):
+    from decision_studio.reasoning.brief import export_brief
+
+    project, _ = await _anchored_project_with_theories(session)
+    await set_decision_priorities(
+        project.id, PrioritiesRequest(priorities={"Y1": "critical"}), session)
+    markdown, _, _ = await export_brief(session, project.id, "markdown")
+    assert "## Model-implied outcomes" in markdown
+    assert "## Weighted view based on decision-maker priorities" in markdown
+    assert markdown.index("## Model-implied outcomes") < markdown.index("## Weighted view")
+    assert "Critical" in markdown
+    assert "What would change my mind" in markdown
+    pdf, media, _ = await export_brief(session, project.id, "pdf")
+    assert media == "application/pdf" and pdf.startswith(b"%PDF")

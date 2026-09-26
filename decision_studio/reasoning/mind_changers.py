@@ -110,9 +110,12 @@ def theory_signals(
         lr = tripwire_likelihood(tw.direction, True, level)
         if tw.status == "pending":
             overdue = tw.check_by is not None and tw.check_by < now
-            status, resolved, fired = ("overdue" if overdue else "not_observed"), False, None
+            status, resolved, fired = ("overdue" if overdue else "pending"), False, None
         else:
-            status, resolved = tw.status, True
+            # Tripwire statuses read as what happened, so "not observed yet"
+            # (pending) and "did not happen" cannot be confused.
+            status = {"observed": "happened", "not_observed": "did_not_happen"}.get(tw.status, tw.status)
+            resolved = True
             fired = tw.status == "observed" if tw.status in ("observed", "not_observed") else None
         out.append(_signal(
             kind="tripwire", source_id=tw.id, theory=theory, text=tw.observable,

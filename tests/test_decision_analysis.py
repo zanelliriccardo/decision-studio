@@ -356,6 +356,9 @@ class TestInformationPriority:
             impact.impact = 0.03 if impact is result.driver_impacts[0] else 0.001
         items = rank_information(result, g, {c.id: c.text for c in claims})
         assert items[0]["impact_band"] == "medium" and "3 points" in items[0]["why"]
+        # Below half a point, and flipping nothing: not listed at all.
+        assert len(items) == 1 or all(
+            i["key"] == items[0]["key"] or i["can_flip"] for i in items)
 
 
 # ── What would change my mind ───────────────────────────────────────────────
@@ -399,6 +402,7 @@ class TestMindChangers:
         signals = theory_signals(theory, [overdue, fired], [], [], 0.5, now=NOW)
         assert signals[0]["status"] == "overdue" and not signals[0]["resolved"]
         assert signals[1]["resolved"] and signals[1]["fired"] is True
+        assert signals[1]["status"] == "happened"
 
     def test_consolidated_per_option_ranked_by_decisiveness(self):
         achieves = _theory("O1", "achieves", title="Q3 makes the date")
@@ -427,3 +431,53 @@ class TestMindChangers:
         signals = {str(theory.id): theory_signals(theory, [resolved, open_one], [], [], 0.5, now=NOW)}
         (q3, _) = consolidate(ANCHOR, [theory], {}, signals)
         assert [s["id"] for s in q3["weaken"]] == [str(open_one.id), str(resolved.id)]
+
+
+# ── The report ──────────────────────────────────────────────────────────────
+
+from decision_studio.reasoning.brief_view import (  # noqa: E402
+    build_forecast,
+    build_mind_changers,
+    build_robustness,
+)
+
+
+class TestReportViews:
+    def _payload(self, **priorities):
+        g, claims = trade_off_graph(bonus_confidence=0.2)
+        return build_comparison(g, claims, ANCHOR, runs=60, priorities=priorities or None).as_dict()
+
+    def test_two_tables_model_implied_then_weighted(self):
+        forecast = build_forecast(self._payload(Y1="critical", Y2="low"))
+        assert forecast.outcomes == ["Y1 Ship on date (Critical)", "Y2 Keep the team (Low)"]
+        assert forecast.rows[1][1][0].startswith("86%")  # a probability, with its range
+        assert forecast.weighted_rows[1][2].endswith("/ 100")  # points, not a percentage
+        assert "Critical" in forecast.priorities_line and "of the weight" in forecast.priorities_line
+        assert forecast.headline.startswith("Based on the priorities entered, the weighted model view")
+        assert "O2 (Q4)" in forecast.headline and "remains the decider's" in forecast.headline
+        for word in ("recommend", "best", "correct"):
+            assert word not in forecast.headline.lower()
+        assert "not a probability" in forecast.weighted_caveat
+
+    def test_defaults_are_marked_in_the_report(self):
+        forecast = build_forecast(self._payload())
+        assert forecast.priorities_line.count("(not set)") == 2
+
+    def test_robustness_answers_the_three_questions(self):
+        robustness = build_robustness(self._payload())
+        assert robustness.pair == "O1 Q3 vs O2 Q4"
+        assert any("robustly higher on Y1" in r for r in robustness.robust)
+        assert robustness.flips and "bonus → y2" in robustness.flips[0]
+        assert "not an empirical forecast" in robustness.method
+
+    def test_mind_changers_are_summarised_per_option(self):
+        options = [{
+            "key": "O1", "label": "Q3",
+            "theories": [{"title": "Vendor decides Q3", "conviction": 0.68}],
+            "weaken": [{"text": "Vendor misses Aug 15", "condition": "if it happens",
+                        "decisiveness": "decisive", "status": "pending"}] * 3,
+            "strengthen": [],
+        }, {"key": "O2", "label": "Q4", "theories": [], "weaken": [], "strengthen": []}]
+        (q3,) = build_mind_changers(options)
+        assert q3.convictions == ["Vendor decides Q3: conviction 68%"]
+        assert len(q3.weaken) == 2 and "decisive; not observed yet" in q3.weaken[0]

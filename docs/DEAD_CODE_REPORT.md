@@ -114,6 +114,11 @@ tables must stay: migrations are history.
 | DC-40 | `lib/api/client.ts` `deprecatedAnalyzeText/CSV/Screenshot` | No callers (wrappers for DC-24) |
 | DC-41 | `lib/api/__tests__/reasoning.test.ts`: `transformQuestion`, `clarification endpoints` blocks | Test functions that no longer exist; 5 of the pre-existing failures and 4 of the TS errors |
 
+Since the decision view (docs/DECISION_VIEW.md), the `optionForecast.title`,
+`hint`, `bestIn`, `decisive`, `notDecisive` and `failed` strings in `i18n/en.ts`
+and `i18n/zh.ts` are unused: the trade-off card reads `decisionView`. The rest of
+`optionForecast` is still in use. Not marked, for the same reason as below.
+
 After removing DC-05/06/22/35/36/41, the `clarifications` and `questions`
 sections of `i18n/en.ts` and `i18n/zh.ts` become unused too. They're not marked,
 because a comment inside a translation object would be noise.

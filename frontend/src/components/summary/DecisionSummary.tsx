@@ -18,6 +18,10 @@ import type { DecisionAnchor } from '../../types/graph.ts'
 import UsagePanel from './UsagePanel.tsx'
 import ComparableCases from './ComparableCases.tsx'
 import OptionForecastCard from './OptionForecastCard.tsx'
+import DecisionPrioritiesCard from './DecisionPrioritiesCard.tsx'
+import RobustnessCard from './RobustnessCard.tsx'
+import MindChangersCard from './MindChangersCard.tsx'
+import InformationPriorityCard from './InformationPriorityCard.tsx'
 
 /**
  * Where an analysis lands: the conclusions, written out.
@@ -47,6 +51,30 @@ export default function DecisionSummary() {
   const [usage, setUsage] = useState<reasoningApi.AnalysisUsage | null>(null)
   const [anchor, setAnchor] = useState<DecisionAnchor | null>(null)
   const [draftingAnchor, setDraftingAnchor] = useState(false)
+  const [comparison, setComparison] = useState<reasoningApi.OptionComparison | null>(null)
+
+  // The options compared on the causal map: one computation feeds the trade-off
+  // table, robustness, drivers and information priority. Recomputed when the
+  // anchor is saved; priorities return their own recomputed comparison.
+  const optionCount = anchor?.options.length ?? 0
+  useEffect(() => {
+    if (!projectId || optionCount < 2) {
+      setComparison(null)
+      return
+    }
+    let cancelled = false
+    reasoningApi
+      .fetchOptionComparison(projectId)
+      .then((loaded) => {
+        if (!cancelled) setComparison(loaded)
+      })
+      .catch(() => {
+        if (!cancelled) setComparison(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, anchor, optionCount])
 
   useEffect(() => {
     if (!projectId) return
@@ -196,8 +224,15 @@ export default function DecisionSummary() {
 
       {/* The options compared by the causal map itself, beside the anchor
           that defines them. Recomputed when the anchor is saved. */}
-      {projectId && anchor && anchor.options.length > 1 && (
-        <OptionForecastCard projectId={projectId} refreshKey={anchor} />
+      {projectId && comparison && (
+        <>
+          <DecisionPrioritiesCard
+            projectId={projectId}
+            priorities={comparison.priorities}
+            onChanged={setComparison}
+          />
+          <OptionForecastCard comparison={comparison} />
+        </>
       )}
 
       {/* The answer, before the explanations it rests on. Someone who has
@@ -301,6 +336,16 @@ export default function DecisionSummary() {
             </div>
           )}
         </section>
+      )}
+
+      {/* After the answer, before the full theories: how solid the comparison
+          is, what could change it, and where more information would help. */}
+      {projectId && comparison && <RobustnessCard comparison={comparison} />}
+      {projectId && ranked.length > 0 && (
+        <MindChangersCard projectId={projectId} refreshKey={theories} />
+      )}
+      {projectId && comparison && !comparison.unavailable && (
+        <InformationPriorityCard items={comparison.informationPriority} />
       )}
 
       {ranked.length === 0 ? (

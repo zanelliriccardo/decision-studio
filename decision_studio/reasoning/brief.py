@@ -149,6 +149,7 @@ async def _gather(session: AsyncSession, project_id: UUID) -> dict[str, Any]:
         "field_tests": field_tests,
         "graph_metrics": graph_metrics,
         "option_forecast": await _option_forecast(session, project_id),
+        "mind_changers": await _mind_changers(session, project_id),
         # The synthesised advice was missing from this document entirely, which
         # meant the export omitted the one thing a reader outside the analysis
         # actually needs: what to do. Per-theory recommendations are not a
@@ -176,6 +177,17 @@ async def _option_forecast(session: AsyncSession, project_id: UUID) -> dict[str,
     except Exception:  # noqa: BLE001 - a brief without the table beats no brief
         logger.exception("Option comparison failed for the brief of %s", project_id)
         return None
+
+
+async def _mind_changers(session: AsyncSession, project_id: UUID) -> list[dict[str, Any]]:
+    """What would change the decider's mind, per option. Never blocks the brief."""
+    from decision_studio.reasoning.mind_changers import what_would_change_my_mind
+
+    try:
+        return await what_would_change_my_mind(session, project_id)
+    except Exception:  # noqa: BLE001 - a brief without the section beats no brief
+        logger.exception("Mind changers failed for the brief of %s", project_id)
+        return []
 
 
 def _chain_lines(theory: Theory, claims: dict[str, Claim]) -> list[str]:
@@ -368,18 +380,62 @@ def build_markdown(data: dict[str, Any]) -> str:
             )
         lines.append("")
 
-    if view.forecast is not None:
-        lines += ["## What the causal map predicts", "", view.forecast.headline, ""]
-        if view.forecast.rows:
-            lines.append("| Option | " + " | ".join(view.forecast.outcomes) + " | Best in | Note |")
-            lines.append("|---" * (len(view.forecast.outcomes) + 3) + "|")
-            for option, cells, best, note in view.forecast.rows:
-                lines.append(f"| {option} | " + " | ".join(cells) + f" | {best} | {note} |")
-            lines += ["", f"*{view.forecast.caveat}*", ""]
+    forecast = view.forecast
+    if forecast is not None:
+        lines += ["## Model-implied outcomes", ""]
+        if not forecast.rows:
+            lines += [forecast.headline, ""]
+        else:
+            lines.append("| Option | " + " | ".join(forecast.outcomes) + " | Note |")
+            lines.append("|---" * (len(forecast.outcomes) + 2) + "|")
+            for option, cells, note in forecast.rows:
+                lines.append(f"| {option} | " + " | ".join(cells) + f" | {note} |")
+            lines += ["", f"*{forecast.caveat}*", ""]
+            lines += ["## Weighted view based on decision-maker priorities", ""]
+            if forecast.priorities_line:
+                lines += [f"**Priorities:** {forecast.priorities_line}", ""]
+            lines += [forecast.headline, ""]
+            if forecast.weighted_rows:
+                lines.append("| Option | " + " | ".join(
+                    f"{o} contribution" for o in forecast.outcomes) + " | Weighted view |")
+                lines.append("|---" * (len(forecast.outcomes) + 2) + "|")
+                for option, cells, total in forecast.weighted_rows:
+                    lines.append(f"| {option} | " + " | ".join(cells) + f" | {total} |")
+                lines += ["", f"*{forecast.weighted_caveat}*", ""]
+
+    # ── 2b. How solid the comparison is ─────────────────────────────────────
+    robustness = view.robustness
+    if robustness is not None:
+        lines += [f"## Robustness: {robustness.pair}", ""]
+        if robustness.robust:
+            lines += ["**What is robust**", ""] + [f"- {r}" for r in robustness.robust] + [""]
+        if robustness.uncertain:
+            lines += ["**What is uncertain**", ""] + [f"- {r}" for r in robustness.uncertain] + [""]
+        if robustness.flips:
+            lines += ["**What could flip it**", ""] + [f"- {r}" for r in robustness.flips] + [""]
+        lines += [f"*{robustness.method}*", ""]
 
     # ── 3. What would change it ─────────────────────────────────────────────
+    if view.mind_changers:
+        lines += ["## What would change my mind", "",
+                  "The tripwires, link tests and field tests already set up, read for or "
+                  "against each option. Conviction is the decider's own belief in a "
+                  "theory, not an outcome probability.", ""]
+        for mind in view.mind_changers:
+            lines += [f"**{mind.option}** — " + "; ".join(mind.convictions), ""]
+            lines += [f"- Would weaken it: {w}" for w in mind.weaken]
+            lines += [f"- Would strengthen it: {w}" for w in mind.strengthen]
+            if not mind.weaken and not mind.strengthen:
+                lines += ["- Nothing set up yet."]
+            lines.append("")
+    if view.information:
+        lines += ["## Information that could reduce decision uncertainty", "",
+                  "A heuristic priority (uncertainty × impact on the comparison × whether it "
+                  "could reverse it), not a money value of information.", ""]
+        lines += [f"{i}. **{action}** — {why}" for i, (action, why) in enumerate(view.information, 1)]
+        lines.append("")
     if view.tests or view.conviction_trail:
-        lines += ["## What would change the decision", ""]
+        lines += ["## Tests and tripwires", ""]
     if view.tests:
         lines += ["Run these before committing — they are ranked by how much the "
                   "answer depends on them and how little is known.", ""]

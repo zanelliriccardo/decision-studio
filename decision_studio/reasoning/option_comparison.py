@@ -60,6 +60,14 @@ ROLE_LEVER = "lever"
 
 #: Drivers shown per comparison. The full ranking feeds information priority.
 MAX_DRIVERS = 5
+#: Inputs that move the gap by less than half a point, and flip nothing, are
+#: not shown as drivers or information needs: at that size they are noise.
+MIN_REPORTED_IMPACT = 0.005
+
+
+def is_reportable(impact: DriverImpact) -> bool:
+    return impact.impact >= MIN_REPORTED_IMPACT or impact.flip == FLIPS or any(
+        status == FLIPS for status in impact.outcome_flips.values())
 
 
 @dataclass
@@ -320,7 +328,8 @@ def _gap_phrase(gap: float, a: str, b: str, labels: dict[str, str]) -> str:
     if abs(gap) < 0.005:
         return "the two are level"
     leader = a if gap > 0 else b
-    return f"{labels[leader]} higher by {abs(gap) * 100:.0f} points"
+    points = round(abs(gap) * 100)
+    return f"{labels[leader]} higher by {points} point{'' if points == 1 else 's'}"
 
 
 def _explain_drivers(
@@ -351,7 +360,7 @@ def _explain_drivers(
     node_to_key = {node: key for key, node in outcome_nodes.items()}
     comparison.drivers = [
         describe_driver(impact, graph, text, labels, a, b, node_to_key)
-        for impact in comparison.driver_impacts[:MAX_DRIVERS]
+        for impact in [i for i in comparison.driver_impacts if is_reportable(i)][:MAX_DRIVERS]
     ]
 
 

@@ -5,7 +5,7 @@
  * app's camelCase types happens here, so components never see raw API shapes.
  */
 
-import { apiGet, apiPatch, apiPost } from './client.ts'
+import { apiGet, apiPatch, apiPost, apiPut } from './client.ts'
 import type {
   ApiChangeSummary,
   Debate,
@@ -708,9 +708,80 @@ export interface OptionForecast {
   leversOn: { claimId: string; text: string }[]
   leversOff: { claimId: string; text: string }[]
   reachesOutcome: boolean
+  /** Option-implied outcome probabilities, per success criterion. */
   outcomes: Record<string, ForecastStats>
   score: number | null
   pBest: number | null
+  /** The weighted view under the decider's priorities: 0-1, not a probability. */
+  weighted: { score: number; contributions: Record<string, number> } | null
+}
+
+export type Importance = 'critical' | 'high' | 'medium' | 'low' | 'none'
+
+export interface DecisionPriority {
+  key: string
+  label: string
+  importance: Importance
+  weight: number
+  normalizedWeight: number
+  isDefault: boolean
+}
+
+export type RobustnessVerdict = 'robust' | 'sensitive' | 'unresolved' | 'no_difference'
+
+export interface Verdict {
+  verdict: RobustnessVerdict
+  higher: string | null
+  share: number
+  difference: number
+  valueA: number
+  valueB: number
+  sentence: string
+}
+
+export interface PairRobustness {
+  a: string
+  b: string
+  outcomes: (Verdict & { key: string; label: string })[]
+  weighted: Verdict | null
+  summary: 'consistent' | 'mixed' | 'unresolved' | 'no_difference'
+}
+
+export interface SensitivityDriver {
+  kind: 'link' | 'claim'
+  key: string
+  edgeId: string | null
+  claimId: string | null
+  label: string
+  current: number
+  low: number
+  high: number
+  uncertainty: number
+  baseGap: number
+  lowGap: number
+  highGap: number
+  impact: number
+  flip: 'flips' | 'erases' | 'no_flip'
+  flipsOutcomes: string[]
+  explanation: string
+}
+
+export interface InformationItem {
+  kind: 'link' | 'claim'
+  key: string
+  edgeId: string | null
+  claimId: string | null
+  subject: string
+  action: string
+  how: string | null
+  hypothesisId: string | null
+  uncertainty: number
+  uncertaintyBand: 'high' | 'medium' | 'low'
+  impact: number
+  impactBand: 'high' | 'medium' | 'low'
+  canFlip: boolean
+  score: number
+  why: string
 }
 
 export interface OptionComparison {
@@ -720,6 +791,16 @@ export interface OptionComparison {
   leader: string | null
   runs: number
   unavailable: string | null
+  priorities: DecisionPriority[]
+  robustness: PairRobustness[]
+  headlinePair: [string, string] | null
+  drivers: SensitivityDriver[]
+  informationPriority: InformationItem[]
+}
+
+type ApiVerdict = {
+  verdict: RobustnessVerdict; higher: string | null; share: number; difference: number
+  value_a: number; value_b: number; sentence: string
 }
 
 interface OptionComparisonApi {
@@ -734,16 +815,43 @@ interface OptionComparisonApi {
     outcomes: Record<string, { point: number; p10: number; p50: number; p90: number; p_best: number }>
     score: number | null
     p_best: number | null
+    weighted?: { score: number; contributions: Record<string, number> } | null
   }[]
   decisive: boolean
   leader: string | null
   runs: number
   unavailable: string | null
+  priorities?: {
+    key: string; label: string; importance: Importance; weight: number
+    normalized_weight: number; is_default: boolean
+  }[]
+  robustness?: {
+    a: string; b: string; summary: PairRobustness['summary']
+    outcomes: (ApiVerdict & { key: string; label: string })[]
+    weighted: ApiVerdict | null
+  }[]
+  headline_pair?: [string, string] | null
+  drivers?: {
+    kind: 'link' | 'claim'; key: string; edge_id: string | null; claim_id: string | null
+    label: string; current: number; low: number; high: number; uncertainty: number
+    base_gap: number; low_gap: number; high_gap: number; impact: number
+    flip: SensitivityDriver['flip']; flips_outcomes: string[]; explanation: string
+  }[]
+  information_priority?: {
+    kind: 'link' | 'claim'; key: string; edge_id: string | null; claim_id: string | null
+    subject: string; action: string; how: string | null; hypothesis_id: string | null
+    uncertainty: number; uncertainty_band: InformationItem['uncertaintyBand']
+    impact: number; impact_band: InformationItem['impactBand']; can_flip: boolean
+    score: number; why: string
+  }[]
 }
 
-/** Pure computation on the reviewed graph: no model call. */
-export async function fetchOptionComparison(projectId: string): Promise<OptionComparison> {
-  const res = await apiGet<OptionComparisonApi>(`${base(projectId)}/options/compare`)
+const toVerdict = (v: ApiVerdict): Verdict => ({
+  verdict: v.verdict, higher: v.higher, share: v.share, difference: v.difference,
+  valueA: v.value_a, valueB: v.value_b, sentence: v.sentence,
+})
+
+export function toOptionComparison(res: OptionComparisonApi): OptionComparison {
   return {
     outcomes: res.outcomes ?? [],
     decisive: res.decisive,
@@ -759,6 +867,7 @@ export async function fetchOptionComparison(projectId: string): Promise<OptionCo
       reachesOutcome: o.reaches_outcome,
       score: o.score,
       pBest: o.p_best,
+      weighted: o.weighted ?? null,
       outcomes: Object.fromEntries(
         Object.entries(o.outcomes ?? {}).map(([k, v]) => [
           k,
@@ -766,7 +875,121 @@ export async function fetchOptionComparison(projectId: string): Promise<OptionCo
         ]),
       ),
     })),
+    priorities: (res.priorities ?? []).map((p) => ({
+      key: p.key, label: p.label, importance: p.importance, weight: p.weight,
+      normalizedWeight: p.normalized_weight, isDefault: p.is_default,
+    })),
+    robustness: (res.robustness ?? []).map((pair) => ({
+      a: pair.a,
+      b: pair.b,
+      summary: pair.summary,
+      outcomes: pair.outcomes.map((o) => ({ ...toVerdict(o), key: o.key, label: o.label })),
+      weighted: pair.weighted ? toVerdict(pair.weighted) : null,
+    })),
+    headlinePair: res.headline_pair ?? null,
+    drivers: (res.drivers ?? []).map((d) => ({
+      kind: d.kind, key: d.key, edgeId: d.edge_id, claimId: d.claim_id, label: d.label,
+      current: d.current, low: d.low, high: d.high, uncertainty: d.uncertainty,
+      baseGap: d.base_gap, lowGap: d.low_gap, highGap: d.high_gap, impact: d.impact,
+      flip: d.flip, flipsOutcomes: d.flips_outcomes ?? [], explanation: d.explanation,
+    })),
+    informationPriority: (res.information_priority ?? []).map((i) => ({
+      kind: i.kind, key: i.key, edgeId: i.edge_id, claimId: i.claim_id, subject: i.subject,
+      action: i.action, how: i.how, hypothesisId: i.hypothesis_id,
+      uncertainty: i.uncertainty, uncertaintyBand: i.uncertainty_band,
+      impact: i.impact, impactBand: i.impact_band, canFlip: i.can_flip,
+      score: i.score, why: i.why,
+    })),
   }
+}
+
+/** Pure computation on the reviewed graph: no model call. */
+export async function fetchOptionComparison(projectId: string): Promise<OptionComparison> {
+  return toOptionComparison(await apiGet<OptionComparisonApi>(`${base(projectId)}/options/compare`))
+}
+
+/**
+ * Set how much each success criterion matters. Changes only the weighted view
+ * (and its robustness and drivers), never the causal graph. Returns the
+ * comparison recomputed under the new priorities.
+ */
+export async function setDecisionPriorities(
+  projectId: string,
+  priorities: Record<string, Importance>,
+): Promise<OptionComparison> {
+  return toOptionComparison(
+    await apiPut<OptionComparisonApi>(`${base(projectId)}/decision-priorities`, { priorities }),
+  )
+}
+
+// --- What would change my mind ---
+
+export interface MindSignal {
+  kind: 'tripwire' | 'link_test' | 'field_test'
+  id: string
+  theoryId: string
+  theoryTitle: string
+  text: string
+  condition: string
+  effect: 'weaken' | 'strengthen'
+  decisiveness: 'weak' | 'moderate' | 'decisive'
+  status: string
+  resolved: boolean
+  fired: boolean | null
+  detail: string | null
+}
+
+export interface MindOption {
+  key: string
+  label: string
+  theories: {
+    id: string
+    title: string
+    predictedEffect: string
+    /** The decider's conviction in the theory — not an outcome probability. */
+    conviction: number | null
+    modelSupport: number | null
+    reachesOutcome: boolean
+    isStale: boolean
+  }[]
+  weaken: MindSignal[]
+  strengthen: MindSignal[]
+}
+
+type ApiSignal = {
+  kind: MindSignal['kind']; id: string; theory_id: string; theory_title: string; text: string
+  condition: string; effect: MindSignal['effect']; decisiveness: MindSignal['decisiveness']
+  status: string; resolved: boolean; fired: boolean | null; detail: string | null
+}
+
+const toSignal = (s: ApiSignal): MindSignal => ({
+  kind: s.kind, id: s.id, theoryId: s.theory_id, theoryTitle: s.theory_title, text: s.text,
+  condition: s.condition, effect: s.effect, decisiveness: s.decisiveness, status: s.status,
+  resolved: s.resolved, fired: s.fired, detail: s.detail,
+})
+
+export async function fetchMindChangers(projectId: string): Promise<MindOption[]> {
+  const res = await apiGet<{
+    options: {
+      key: string; label: string
+      theories: {
+        id: string; title: string; predicted_effect: string; conviction: number | null
+        model_support: number | null; reaches_outcome: boolean; is_stale: boolean
+      }[]
+      weaken: ApiSignal[]
+      strengthen: ApiSignal[]
+    }[]
+  }>(`${base(projectId)}/what-would-change-my-mind`)
+  return (res.options ?? []).map((o) => ({
+    key: o.key,
+    label: o.label,
+    theories: o.theories.map((t) => ({
+      id: t.id, title: t.title, predictedEffect: t.predicted_effect, conviction: t.conviction,
+      modelSupport: t.model_support, reachesOutcome: t.reaches_outcome, isStale: t.is_stale,
+    })),
+    weaken: o.weaken.map(toSignal),
+    strengthen: o.strengthen.map(toSignal),
+  }))
 }
 
 /** How much a pending tripwire would count, stated before it is observed. */

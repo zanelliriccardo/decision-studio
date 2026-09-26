@@ -116,6 +116,10 @@ class BriefView:
     key_numbers: list[tuple[str, str]]
     graph_metrics: dict[str, Any] = field(default_factory=dict)
     forecast: "Forecast | None" = None
+    robustness: "Robustness | None" = None
+    mind_changers: list["MindChangerView"] = field(default_factory=list)
+    #: (action, why) for the top information needs.
+    information: list[tuple[str, str]] = field(default_factory=list)
 
 
 STATUS_NOTES = {
@@ -126,34 +130,80 @@ STATUS_NOTES = {
 }
 
 
+IMPORTANCE_LABELS = {
+    "critical": "Critical", "high": "High", "medium": "Medium", "low": "Low", "none": "Not a factor",
+}
+
+
 @dataclass
 class Forecast:
-    """What the causal map predicts for each option, ready to print."""
+    """What each option implies, and the same read through the decider's priorities."""
 
-    #: Column headers: one per success criterion.
+    #: Column headers for the model-implied table: one per success criterion.
     outcomes: list[str]
-    #: (option, cells per outcome, best-in share, note)
-    rows: list[tuple[str, list[str], str, str]]
+    #: Model-implied outcomes: (option, cells per criterion, note).
+    rows: list[tuple[str, list[str], str]]
+    #: The weighted view in one neutral sentence (or why there is none).
     headline: str
+    #: "Y1 Ship on date: Critical (67% of the weight); ..."
+    priorities_line: str | None = None
+    #: Weighted view: (option, contribution cells per criterion, total "60 / 100").
+    weighted_rows: list[tuple[str, list[str], str]] = field(default_factory=list)
     caveat: str = (
-        "Each option was applied to the reviewed causal map (its levers switched "
-        "on, the other options' switched off) and the map propagated. Figures are "
-        "the map's belief in each success criterion, with the range when every "
-        "link strength is varied within its uncertainty; \"best in\" is the share "
-        "of those variations in which the option came out ahead. It is what the "
-        "map implies, not a forecast of the world."
+        "Model-implied outcomes: each option was applied to the reviewed causal map "
+        "(its levers switched on, the other options' switched off) and the map "
+        "propagated. The range is how far each figure moves when every link strength "
+        "is varied within its uncertainty. What the map implies, not a forecast."
     )
+    weighted_caveat: str = (
+        "Weighted view: each model-implied outcome multiplied by its share of the "
+        "weight the decider gave it (Critical 8, High 4, Medium 2, Low 1, Not a "
+        "factor 0), then added up. Points out of 100 — not a probability, and not a "
+        "recommendation."
+    )
+
+
+@dataclass
+class Robustness:
+    """Page-two answers: what is robust, what is uncertain, what could flip it."""
+
+    pair: str
+    robust: list[str]
+    uncertain: list[str]
+    flips: list[str]
+    method: str = (
+        "Robust: the higher option is higher in at least 80% of simulations with link "
+        "strengths varied; sensitive: 60–80%; unresolved: below 60%; differences under "
+        "2 points count as none. Inputs that could flip the result were found by moving "
+        "each link strength and root claim across its plausible range, one at a time. "
+        "Sensitivity to the model's uncertainty, not an empirical forecast."
+    )
+
+
+@dataclass
+class MindChangerView:
+    option: str
+    convictions: list[str]
+    weaken: list[str]
+    strengthen: list[str]
+
+
+def _points(value: float) -> str:
+    return f"{round(value * 100)}"
 
 
 def build_forecast(data: dict[str, Any] | None) -> Forecast | None:
     """The comparison from reasoning/option_comparison.py, as sentences and cells."""
     if not data or not data.get("options"):
         return None
-    labels = {o["key"]: o["label"] for o in data["options"]}
     if data.get("unavailable"):
         return Forecast(outcomes=[], rows=[], headline=data["unavailable"])
+    labels = {o["key"]: o["label"] for o in data["options"]}
     outcomes = data.get("outcomes", [])
+    priorities = {p["key"]: p for p in data.get("priorities", [])}
+
     rows = []
+    weighted_rows = []
     for option in data["options"]:
         cells = []
         for outcome in outcomes:
@@ -162,20 +212,111 @@ def build_forecast(data: dict[str, Any] | None) -> Forecast | None:
                 "—" if not stats else
                 f"{pct(stats['point'])} ({pct(stats['p10'])}–{pct(stats['p90'])})"
             )
-        rows.append((
-            f"{option['key']} {option['label']}", cells,
-            pct(option.get("p_best")), STATUS_NOTES.get(option["status"], ""),
+        name = f"{option['key']} {option['label']}"
+        rows.append((name, cells, STATUS_NOTES.get(option["status"], "")))
+        weighted = option.get("weighted")
+        if weighted:
+            weighted_rows.append((
+                name,
+                [_points(weighted["contributions"].get(o["key"], 0.0))
+                 if o["key"] in weighted["contributions"] else "—" for o in outcomes],
+                f"{_points(weighted['score'])} / 100",
+            ))
+
+    priorities_line = "; ".join(
+        f"{o['key']} {o['label']}: {IMPORTANCE_LABELS[priorities[o['key']]['importance']]}"
+        + (" (not set)" if priorities[o["key"]].get("is_default") else "")
+        + f" — {pct(priorities[o['key']]['normalized_weight'])} of the weight"
+        for o in outcomes if o["key"] in priorities
+    ) or None
+
+    headline = "Every success criterion is set to \"not a factor\": there is no weighted view."
+    if weighted_rows:
+        pair = _headline_pair(data)
+        verdict = (pair or {}).get("weighted")
+        if not verdict or verdict["verdict"] == "no_difference" or not verdict.get("higher"):
+            headline = ("Based on the priorities entered, the weighted model view shows no "
+                        "material difference between the leading options.")
+        else:
+            wording = {
+                "robust": "robustly higher",
+                "sensitive": "higher, but sensitive to the assumptions",
+                "unresolved": "higher only at the central estimate (unresolved)",
+            }[verdict["verdict"]]
+            higher = verdict["higher"]
+            headline = (f"Based on the priorities entered, the weighted model view is "
+                        f"{wording} for {higher} ({labels[higher]}): higher in "
+                        f"{pct(verdict['share'])} of simulations. The decision itself "
+                        "remains the decider's.")
+    return Forecast(
+        outcomes=[
+            f"{o['key']} {o['label']}"
+            + (f" ({IMPORTANCE_LABELS[priorities[o['key']]['importance']]})" if o["key"] in priorities else "")
+            for o in outcomes
+        ],
+        rows=rows, headline=headline, priorities_line=priorities_line,
+        weighted_rows=weighted_rows,
+    )
+
+
+def _headline_pair(data: dict[str, Any]) -> dict[str, Any] | None:
+    pair_keys = set(data.get("headline_pair") or [])
+    return next((p for p in data.get("robustness", []) if {p["a"], p["b"]} == pair_keys), None)
+
+
+def build_robustness(data: dict[str, Any] | None) -> Robustness | None:
+    """The headline comparison's robustness and the inputs that could flip it."""
+    if not data or data.get("unavailable") or not data.get("robustness"):
+        return None
+    pair = _headline_pair(data) or data["robustness"][0]
+    labels = {o["key"]: o["label"] for o in data["options"]}
+    rows = list(pair["outcomes"]) + ([pair["weighted"]] if pair.get("weighted") else [])
+    robust = [r["sentence"] for r in rows if r["verdict"] == "robust"]
+    uncertain = [r["sentence"] for r in rows if r["verdict"] in ("sensitive", "unresolved")]
+    drivers = data.get("drivers", [])
+    flips = [f"{d['label']}. {d['explanation']}" for d in drivers if d["flip"] in ("flips", "erases")]
+    if not flips and drivers:
+        top = drivers[0]
+        flips = [f"No single input reverses the comparison within its plausible range. The "
+                 f"largest mover is {top['label']} (the weighted gap moves by "
+                 f"{round(top['impact'] * 100)} point{'' if round(top['impact'] * 100) == 1 else 's'} "
+                 "across its range)."]
+    return Robustness(
+        pair=f"{pair['a']} {labels[pair['a']]} vs {pair['b']} {labels[pair['b']]}",
+        robust=robust, uncertain=uncertain, flips=flips,
+    )
+
+
+STATUS_WORDS = {
+    "pending": "not observed yet", "overdue": "overdue", "happened": "happened",
+    "did_not_happen": "did not happen", "expired": "expired", "not_tested": "not tested",
+    "held": "held", "refuted": "refuted", "inconclusive": "inconclusive", "not_run": "not run",
+    "supports": "supported", "refutes": "refuted", "abandoned": "abandoned",
+}
+
+
+def build_mind_changers(options: list[dict[str, Any]] | None, per_direction: int = 2) -> list[MindChangerView]:
+    """Per option: convictions, and the strongest signals each way."""
+    out = []
+    for option in options or []:
+        if not option.get("theories"):
+            continue
+
+        def line(signal: dict[str, Any]) -> str:
+            return (f"{signal['text']} ({signal['condition']}; "
+                    f"{signal['decisiveness']}; {STATUS_WORDS.get(signal['status'], signal['status'])})")
+
+        out.append(MindChangerView(
+            option=f"{option['key']} {option['label']}",
+            convictions=[
+                f"{t['title']}: conviction {pct(t['conviction'])}" if t.get("conviction") is not None
+                else f"{t['title']}: conviction not stated"
+                for t in option["theories"]
+            ],
+            weaken=[line(s) for s in option.get("weaken", [])[:per_direction]],
+            strengthen=[line(s) for s in option.get("strengthen", [])[:per_direction]],
         ))
-    ranked = sorted(data["options"], key=lambda o: o.get("p_best") or 0.0, reverse=True)
-    leader = ranked[0]
-    if data.get("decisive"):
-        headline = (f"On the causal map, {leader['key']} ({labels[leader['key']]}) comes "
-                    f"out ahead in {pct(leader['p_best'])} of simulations.")
-    else:
-        headline = (f"The causal map does not separate the options reliably: the "
-                    f"leader, {leader['key']}, is ahead in only {pct(leader['p_best'])} "
-                    "of simulations.")
-    return Forecast(outcomes=[o["label"] for o in outcomes], rows=rows, headline=headline)
+    return out
 
 
 def _rank_key(line: TheoryLine) -> tuple:
@@ -298,7 +439,7 @@ def build_view(data: dict[str, Any]) -> BriefView:
         ("Theories", f"{len(lines)}" + (f" ({contested} contested)" if contested else "")),
         ("Open tests", str(len(tests))),
         ("Next check", next_due.strftime("%d %b %Y") if next_due else "—"),
-        ("Map favours", _map_favours(forecast_data)),
+        ("Weighted view", _weighted_lead(forecast_data)),
     ]
 
     return BriefView(
@@ -316,16 +457,23 @@ def build_view(data: dict[str, Any]) -> BriefView:
         key_numbers=key_numbers,
         graph_metrics=data.get("graph_metrics", {}),
         forecast=forecast,
+        robustness=build_robustness(forecast_data),
+        mind_changers=build_mind_changers(data.get("mind_changers")),
+        information=[(i["action"], i["why"]) for i in forecast_data.get("information_priority", [])[:3]],
     )
 
 
-def _map_favours(data: dict[str, Any]) -> str:
+def _weighted_lead(data: dict[str, Any]) -> str:
+    """The weighted view's headline comparison in two words, for a key-number tile."""
     if not data or data.get("unavailable") or not data.get("options"):
         return "—"
-    if not data.get("decisive"):
-        return "No clear leader"
-    leader = next(o for o in data["options"] if o["key"] == data["leader"])
-    return f"{leader['key']} ({pct(leader['p_best'])})"
+    verdict = (_headline_pair(data) or {}).get("weighted")
+    if not verdict:
+        return "—"
+    if verdict["verdict"] == "no_difference" or not verdict.get("higher"):
+        return "No difference"
+    word = {"robust": "robust", "sensitive": "sensitive", "unresolved": "unresolved"}[verdict["verdict"]]
+    return f"{verdict['higher']} higher · {word}"
 
 
 def quality_lines(metrics: dict[str, Any]) -> list[str]:

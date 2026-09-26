@@ -1064,6 +1064,14 @@ None is calibrated. Each is a starting point.
 | `MAX_FREE_TEXT_CHARS` | 2000 | orchestrator | Not for the INSERT — a 2000-char "time delay" crowds out prompts |
 | `MEANINGFUL_CHANGE_PX` | 1 | useResizeObserver | Below this, a resize is layout noise |
 | minimum connected links | 1 | validation | A categorical boundary, not a tuned fraction. A fraction does not discriminate on short chains and would add a constant without adding a distinction — see §5.10 |
+| Importance weights | 8 / 4 / 2 / 1 / 0 | decision_priorities | Critical / High / Medium / Low / Not a factor; unset = Medium. See docs/DECISION_VIEW.md |
+| `NEGLIGIBLE_DIFFERENCE` | 0.02 | decision_robustness | Below: no material difference between options on a criterion |
+| `ROBUST_SHARE` / `LEANING_SHARE` | 0.80 / 0.60 | decision_robustness | Share of runs for "robustly higher" / "sensitive"; below is unresolved |
+| `LINK_SPREAD_SIGMAS` | 2.0 | option_sensitivity | Plausible range of a link strength, in Monte Carlo sigmas |
+| `PRIOR_SPREAD` | 0.20 | option_sensitivity | Plausible range of a root claim's prior (a what-if) |
+| `FLIP_EPSILON` | 0.005 | option_sensitivity | A gap this close to zero counts as closed |
+| `MIN_REPORTED_IMPACT` | 0.005 | option_comparison | Drivers moving the gap less (and flipping nothing) are not shown |
+| `FULL_IMPACT_POINTS` | 20 | information_priority | A 20-point gap movement is full impact |
 
 ---
 

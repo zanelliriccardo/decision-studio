@@ -144,6 +144,24 @@ or link test is written and map it to the ratio.
 * Incremental outcome pairing costs about three model calls per new claim.
   Batch new claims per save.
 
+## Part 3: the decision view
+
+Four features built on the option comparison, with no second graph, probability
+system or simulation: decision priorities and the weighted view, robustness and
+driver sensitivity, "what would change my mind", and information priority.
+Methodology, thresholds, semantics and V1 simplifications are in
+`docs/DECISION_VIEW.md`. Tests: `tests/test_decision_analysis.py` (unit) and
+`tests/test_decision_analysis_db.py`; frontend
+`components/summary/__tests__/DecisionView.test.tsx`. Migration `025`.
+
+Two corrections made along the way:
+
+* The option comparison's overall "best in" share averaged the success criteria
+  with equal weights — a hidden weighting. It now uses the decider's priorities
+  explicitly and names no leader when every criterion is weightless.
+* A 3-point movement was labelled "high impact" in information priority when
+  impact was relative to the largest driver. Impact is now absolute.
+
 ## Report for managers and executives
 
 The brief (Markdown, HTML, PDF) was re-ordered to be read answer-first

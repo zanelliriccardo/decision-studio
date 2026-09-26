@@ -31,7 +31,11 @@ import networkx as nx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from decision_studio.graph.option_sensitivity import ERASES, FLIPS
-from decision_studio.reasoning.option_comparison import OptionComparison, driver_uncertainty
+from decision_studio.reasoning.option_comparison import (
+    OptionComparison,
+    driver_uncertainty,
+    is_reportable,
+)
 
 MAX_ITEMS = 5
 RELEVANCE = {FLIPS: 1.0, ERASES: 0.75}
@@ -76,6 +80,8 @@ def rank_information(
 
     items = []
     for impact in impacts:
+        if not is_reportable(impact):
+            continue
         uncertainty = driver_uncertainty(impact, graph)
         impact_share = min(1.0, impact.impact * 100 / FULL_IMPACT_POINTS)
         relevance = RELEVANCE.get(impact.flip, DEFAULT_RELEVANCE)

@@ -174,10 +174,10 @@ def _panel(flowables: list, tint=PANEL, edge=RULE) -> Table:
     return t
 
 
-def _bullets(items: list[str], style: ParagraphStyle) -> ListFlowable:
-    """A bulleted list in the given style."""
+def _bullets(items: list[str], style: ParagraphStyle, *, escape: bool = True) -> ListFlowable:
+    """A bulleted list in the given style. ``escape=False`` for items already marked up."""
     return ListFlowable(
-        [ListItem(Paragraph(_escape(i), style), leftIndent=13) for i in items],
+        [ListItem(Paragraph(_escape(i) if escape else i, style), leftIndent=13) for i in items],
         bulletType="bullet", bulletFontSize=8, bulletOffsetY=-1,
         leftIndent=13, spaceAfter=6,
     )
@@ -327,24 +327,7 @@ def _options_table(view: BriefView, S) -> Table:
     return t
 
 
-def _forecast_block(view: BriefView, S) -> list:
-    """What the causal map predicts for each option, with its caveat attached."""
-    forecast = view.forecast
-    out: list = [Paragraph("WHAT THE CAUSAL MAP PREDICTS", S["h3"]),
-                 Paragraph(_escape(forecast.headline), S["body"])]
-    if not forecast.rows:
-        return out
-    header = ["Option", *forecast.outcomes, "Best in", "Note"]
-    rows = [[Paragraph(_escape(h), S["cellh"]) for h in header]]
-    for option, cells, best, note in forecast.rows:
-        rows.append(
-            [Paragraph(_escape(option), S["cell"])]
-            + [Paragraph(_escape(c), S["cell"]) for c in cells]
-            + [Paragraph(f"<b>{_escape(best)}</b>", S["cell"]),
-               Paragraph(f"<i>{_escape(note)}</i>", S["cell"])]
-        )
-    n = len(forecast.outcomes)
-    widths = [3.6 * cm] + [(8.4 * cm) / max(n, 1)] * n + [1.6 * cm, 2.4 * cm]
+def _grid(rows: list[list], widths: list[float]) -> Table:
     t = Table(rows, colWidths=widths, repeatRows=1)
     t.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -356,7 +339,80 @@ def _forecast_block(view: BriefView, S) -> list:
         ("LINEBELOW", (0, 0), (-1, 0), 0.7, MUTED),
         ("LINEBELOW", (0, 1), (-1, -2), 0.3, RULE),
     ]))
-    return out + [t, Paragraph(_escape(forecast.caveat), S["meta"])]
+    return t
+
+
+def _forecast_block(view: BriefView, S) -> list:
+    """Model-implied outcomes, then the weighted view — two tables, never one number."""
+    forecast = view.forecast
+    out: list = [Paragraph("MODEL-IMPLIED OUTCOMES", S["h3"])]
+    if not forecast.rows:
+        return out + [Paragraph(_escape(forecast.headline), S["body"])]
+    n = len(forecast.outcomes)
+    rows = [[Paragraph(_escape(h), S["cellh"]) for h in ["Option", *forecast.outcomes, "Note"]]]
+    for option, cells, note in forecast.rows:
+        rows.append(
+            [Paragraph(_escape(option), S["cell"])]
+            + [Paragraph(_escape(c), S["cell"]) for c in cells]
+            + [Paragraph(f"<i>{_escape(note)}</i>", S["cell"])]
+        )
+    out += [_grid(rows, [3.6 * cm] + [(9.6 * cm) / max(n, 1)] * n + [2.8 * cm]),
+            Paragraph(_escape(forecast.caveat), S["meta"])]
+
+    weighted: list = [Paragraph("WEIGHTED VIEW BASED ON DECISION-MAKER PRIORITIES", S["h3"])]
+    if forecast.priorities_line:
+        weighted.append(Paragraph("<b>Priorities:</b> " + _escape(forecast.priorities_line), S["body"]))
+    weighted.append(Paragraph(_escape(forecast.headline), S["body"]))
+    if forecast.weighted_rows:
+        rows = [[Paragraph(_escape(h), S["cellh"]) for h in
+                 ["Option", *(f"{o} contribution" for o in forecast.outcomes), "Weighted view"]]]
+        for option, cells, total in forecast.weighted_rows:
+            rows.append(
+                [Paragraph(_escape(option), S["cell"])]
+                + [Paragraph(_escape(c), S["cell"]) for c in cells]
+                + [Paragraph(f"<b>{_escape(total)}</b>", S["cell"])]
+            )
+        weighted += [_grid(rows, [3.6 * cm] + [(9.6 * cm) / max(n, 1)] * n + [2.8 * cm]),
+                     Paragraph(_escape(forecast.weighted_caveat), S["meta"])]
+    # Heading, priorities, sentence and table on one page: split, the numbers
+    # would lose the priorities that give them their meaning.
+    return out + [KeepTogether(weighted)]
+
+
+def _decision_view_section(view: BriefView, S) -> list:
+    """Page two, top: how solid the comparison is, what would change the decider's
+    mind, and what is worth finding out first. Short by design."""
+    out: list = []
+    robustness = view.robustness
+    if robustness is not None:
+        out.append(Paragraph(f"How robust is the comparison? {_escape(robustness.pair)}", S["h1"]))
+        for title, items in (("WHAT IS ROBUST", robustness.robust),
+                             ("WHAT IS UNCERTAIN", robustness.uncertain),
+                             ("WHAT COULD FLIP IT", robustness.flips)):
+            if items:
+                out += [Paragraph(title, S["h3"]), _bullets(items, S["body"])]
+        out.append(Paragraph(_escape(robustness.method), S["meta"]))
+    if view.mind_changers:
+        out.append(Paragraph("What would change my mind", S["h1"]))
+        out.append(Paragraph(
+            "The tripwires, link tests and field tests already set up, read for or against "
+            "each option. Conviction is the decider's belief in a theory, not an outcome "
+            "probability.", S["meta"]))
+        for mind in view.mind_changers:
+            block = [Paragraph(f"<b>{_escape(mind.option)}</b> — " + _escape("; ".join(mind.convictions)), S["body"])]
+            items = [f"<b>Would weaken it:</b> {_escape(w)}" for w in mind.weaken] + \
+                    [f"<b>Would strengthen it:</b> {_escape(w)}" for w in mind.strengthen]
+            block.append(_bullets(items or ["Nothing set up yet."], S["body"], escape=False))
+            out.append(KeepTogether(block))
+    if view.information:
+        out.append(Paragraph("Information that could reduce decision uncertainty", S["h1"]))
+        out.append(Paragraph(
+            "A heuristic priority (uncertainty × impact on the comparison × whether it could "
+            "reverse it), not a money value of information.", S["meta"]))
+        out.append(_bullets(
+            [f"<b>{_escape(action)}</b> — {_escape(why)}" for action, why in view.information],
+            S["body"], escape=False))
+    return out
 
 
 def _executive_summary(view: BriefView, S) -> list:
@@ -431,7 +487,7 @@ def _executive_summary(view: BriefView, S) -> list:
 
 def _tests_section(view: BriefView, S) -> list:
     """What could still change the answer, as a list someone can commission."""
-    out: list = [Paragraph("What would change the decision", S["h1"])]
+    out: list = _decision_view_section(view, S) + [Paragraph("Tests and tripwires", S["h1"])]
     if view.tests:
         out.append(Paragraph(
             "Run these before committing. Tests on links are ranked by how much the "
@@ -505,7 +561,10 @@ def build_pdf(data: dict[str, Any]) -> bytes:
     story += _executive_summary(view, S)
 
     # ── What could still change it ──────────────────────────────────────────
-    story.append(PageBreak())
+    # No forced page break: the executive summary now runs past one page, and
+    # robustness and "what would change my mind" belong right after it, inside
+    # the first two pages an executive reads.
+    story.append(Spacer(1, 0.4 * cm))
     story += _tests_section(view, S)
 
     # ── The reasoning, grouped by option ────────────────────────────────────
