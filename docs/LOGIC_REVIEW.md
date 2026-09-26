@@ -30,6 +30,28 @@ that goal, with a proposed fix. Dead code is in `docs/DEAD_CODE_REPORT.md`.
 Ranked by distance from the Aristotle goal: the first items decide whether the
 tool actually compares options; the last are cost and polish.
 
+**Status (items 1 to 8 implemented).** Each item below keeps its original
+analysis; what was built is in the table. Tests: `tests/test_improvements.py`
+(unit) and `tests/test_improvements_db.py` (database). Migration `024` adds the
+columns.
+
+| Item | What was built | Where |
+|---|---|---|
+| 1 Options compared by the model | Each option applied as an intervention on its levers (claims tagged `lever` bearing on it: on for it, off for the others, incoming links cut), the map propagated, success criteria read; repeated with link weights varied for ranges and a win rate. Summary card, report table, "Map favours" key number | `reasoning/option_comparison.py`, `graph/stability.compare_options`, `GET …/options/compare`, `OptionForecastCard.tsx`, `brief_view.build_forecast` |
+| 2 Correlated evidence | Observations can name the event they came from; per theory one event counts once (the strongest); an event already known when the prior was restated counts not at all. History shows "N observations, M independent" | `theory_value.replay`, `theory_belief.event`, `EventField.tsx`, `GET …/observation-events` |
+| 3 Outside view | Summary-page box for comparable cases (saved on the project); each theory matched with a polarity, compared against the decider's conviction and recomputed on every read; kept across regeneration; re-checked after automatic generation | `outside_view.compare` / `current_comparison`, `ComparableCases.tsx`, `POST/GET …/outside-view` |
+| 4 Data validation | A pasted two-column table tests one link: Granger forward and reverse when rows are in time order, else Spearman with the predicted sign. Nothing significant is inconclusive, never refuted | `reasoning/link_data.py`, `POST …/hypotheses/{id}/data`, `DataTestForm.tsx` |
+| 5 Recompute | The frontend no longer calls `POST /recompute` before reloading the graph. The endpoint and function stay, marked DC-23, for you to remove | `hooks/useReasoning.ts` |
+| 6 Noisy-OR independence | Where a node's causes share a driver within two hops, a second propagation combines them as one cause; the gap is carried downstream and shown in the claim panel with the shared claims named | `graph/shared_causes.py`, `ClaimResponse.belief_if_dependent`, `NodeDetailPanel.tsx` |
+| 7 Ranking | One order everywhere: reaches a success criterion, current before stale, then conviction when stated, else the objection-discounted score. `business_impact` sorts nothing | `theories.rank_key` |
+| 8 Weights | Tripwires and link tests take a decisiveness (a little / moderately / decisively) stated before the result and locked after it; it sets the likelihood ratio. Moderate equals the old fixed value | `theory_value.tripwire_likelihood`, `link_tests.result_likelihood`, `DecisivenessPicker.tsx` |
+
+Item 9 (latency and cost) is not done.
+
+One finding made along the way: the POST outside-view endpoint called
+`extract_reference_cases` without the recollection it needs, so even an
+external caller always got no cases. Fixed with item 3.
+
 ### 1. Options are compared by argument, not by the model (high)
 
 Each theory says "option O1 achieves/threatens Y1", and the brief now lays out
@@ -147,8 +169,8 @@ report at the top; the graph page has Download report in its toolbar.
 
 ## Verification
 
-* Backend: `pytest` 71 passed (Postgres running; DB tests skip otherwise).
-* Frontend: `vitest` 174 passed; the 10 failures are all tests of dead code
+* Backend: `pytest` 98 passed (Postgres running; DB tests skip otherwise).
+* Frontend: `vitest` 176 passed; the 10 failures are all tests of dead code
   (DC-35, DC-36, DC-41). `tsc` reports no new errors; eslint clean on touched
   files.
 * End to end (Playwright against the running app): the three Download report
