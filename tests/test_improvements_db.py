@@ -105,3 +105,21 @@ async def test_one_event_moves_conviction_once(session):
     assert sum(s.applied for s in conviction.steps) == 1
     assert await theory_value.known_events(session, project.id) == [
         "vendor missed 1 august", "Vendor missed 1 August"]
+
+
+async def test_options_are_compared_on_the_reviewed_graph(session):
+    from decision_studio.api.routes.theory_value import compare_options
+    from decision_studio.reasoning.option_comparison import compare_project_options
+
+    project, _ = await _anchored_project_with_theories(session)
+    comparison = await compare_project_options(session, project.id, runs=20)
+    assert [o.key for o in comparison.options][:2] == ["O1", "O2"]
+    q3 = comparison.options[0]
+    assert [t for _, t in q3.levers_on] == ["Customers were promised a Q3 launch"]
+    assert comparison.options[1].levers_off == q3.levers_on
+    assert comparison.outcomes and comparison.outcomes[0][0] == "Y1"
+    if comparison.unavailable is None:
+        assert sum(o.p_best for o in comparison.options) == pytest.approx(1.0)
+
+    response = await compare_options(project.id, session)
+    assert response.options[0].key == "O1"

@@ -17,6 +17,7 @@ import { draftDecisionAnchor, toAnchor } from '../../lib/decisionAnchor.ts'
 import type { DecisionAnchor } from '../../types/graph.ts'
 import UsagePanel from './UsagePanel.tsx'
 import ComparableCases from './ComparableCases.tsx'
+import OptionForecastCard from './OptionForecastCard.tsx'
 
 /**
  * Where an analysis lands: the conclusions, written out.
@@ -193,6 +194,12 @@ export default function DecisionSummary() {
           )}
         </div>
       </header>
+
+      {/* The options compared by the causal map itself, beside the anchor
+          that defines them. Recomputed when the anchor is saved. */}
+      {projectId && anchor && anchor.options.length > 1 && (
+        <OptionForecastCard projectId={projectId} refreshKey={anchor} />
+      )}
 
       {/* The answer, before the explanations it rests on. Someone who has
           waited for an analysis wants to know what it concluded; the reasoning

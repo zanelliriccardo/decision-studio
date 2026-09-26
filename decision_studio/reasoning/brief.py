@@ -148,6 +148,7 @@ async def _gather(session: AsyncSession, project_id: UUID) -> dict[str, Any]:
         "hypotheses": await list_hypotheses(session, project_id),
         "field_tests": field_tests,
         "graph_metrics": graph_metrics,
+        "option_forecast": await _option_forecast(session, project_id),
         # The synthesised advice was missing from this document entirely, which
         # meant the export omitted the one thing a reader outside the analysis
         # actually needs: what to do. Per-theory recommendations are not a
@@ -164,6 +165,17 @@ async def _gather(session: AsyncSession, project_id: UUID) -> dict[str, Any]:
         "reference_cases": await list_reference_cases(session, project_id),
         "debates": await list_debates(session, project_id),
     }
+
+
+async def _option_forecast(session: AsyncSession, project_id: UUID) -> dict[str, Any] | None:
+    """What the causal map predicts per option. Pure computation; never blocks the brief."""
+    from decision_studio.reasoning.option_comparison import compare_project_options
+
+    try:
+        return (await compare_project_options(session, project_id)).as_dict()
+    except Exception:  # noqa: BLE001 - a brief without the table beats no brief
+        logger.exception("Option comparison failed for the brief of %s", project_id)
+        return None
 
 
 def _chain_lines(theory: Theory, claims: dict[str, Claim]) -> list[str]:
@@ -355,6 +367,15 @@ def build_markdown(data: dict[str, Any]) -> str:
                 f"{_option_cell(row.case_against)} | {row.status} |"
             )
         lines.append("")
+
+    if view.forecast is not None:
+        lines += ["## What the causal map predicts", "", view.forecast.headline, ""]
+        if view.forecast.rows:
+            lines.append("| Option | " + " | ".join(view.forecast.outcomes) + " | Best in | Note |")
+            lines.append("|---" * (len(view.forecast.outcomes) + 3) + "|")
+            for option, cells, best, note in view.forecast.rows:
+                lines.append(f"| {option} | " + " | ".join(cells) + f" | {best} | {note} |")
+            lines += ["", f"*{view.forecast.caveat}*", ""]
 
     # ── 3. What would change it ─────────────────────────────────────────────
     if view.tests or view.conviction_trail:

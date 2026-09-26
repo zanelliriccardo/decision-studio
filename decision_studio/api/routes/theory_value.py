@@ -20,7 +20,7 @@ from decision_studio.db.models import LinkHypothesis, Project
 from decision_studio.db.session import get_session
 from decision_studio.exceptions import LLMError
 from decision_studio.reasoning import experiments as experiment_service
-from decision_studio.reasoning import link_tests
+from decision_studio.reasoning import link_tests, option_comparison
 from decision_studio.reasoning import theory_value
 
 router = APIRouter(prefix="/api/v1", tags=["theory-value"])
@@ -173,6 +173,66 @@ async def list_observation_events(
     """Events already named on observations, most recent first, for reuse."""
     await _require_project(project_id, session)
     return EventListResponse(events=await theory_value.known_events(session, project_id))
+
+
+# --- What the causal map predicts for each option ---
+
+
+class ForecastStats(BaseModel):
+    point: float
+    p10: float
+    p50: float
+    p90: float
+    #: Share of simulations in which this option was best on this outcome.
+    p_best: float
+
+
+class LeverResponse(BaseModel):
+    claim_id: str
+    text: str
+
+
+class OptionForecastResponse(BaseModel):
+    key: str
+    label: str
+    #: modelled, only_as_alternative, no_path or not_modelled
+    status: str
+    levers_on: list[LeverResponse] = []
+    levers_off: list[LeverResponse] = []
+    reaches_outcome: bool = False
+    #: Per outcome key.
+    outcomes: dict[str, ForecastStats] = {}
+    score: float | None = None
+    p_best: float | None = None
+
+
+class OutcomeRef(BaseModel):
+    key: str
+    label: str
+
+
+class OptionComparisonResponse(BaseModel):
+    outcomes: list[OutcomeRef] = []
+    options: list[OptionForecastResponse] = []
+    decisive: bool = False
+    leader: str | None = None
+    runs: int = 0
+    unavailable: str | None = None
+
+
+@router.get("/graph/{project_id}/options/compare", response_model=OptionComparisonResponse)
+async def compare_options(
+    project_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> OptionComparisonResponse:
+    """Choose each option in turn, propagate, and read the success criteria.
+
+    Pure computation on the reviewed graph: no model call. Repeated with the
+    link weights shaken, so each option also gets a win rate.
+    """
+    await _require_project(project_id, session)
+    comparison = await option_comparison.compare_project_options(session, project_id)
+    return OptionComparisonResponse(**comparison.as_dict())
 
 
 # --- Link hypotheses ---

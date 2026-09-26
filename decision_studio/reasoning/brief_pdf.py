@@ -273,12 +273,12 @@ def _theory_block(theory, data: dict[str, Any], index: int, S) -> list:
 
 
 def _key_numbers(view: BriefView, S) -> Table:
-    """Four tiles: what a reader scans before reading anything."""
+    """A row of tiles: what a reader scans before reading anything."""
     cells = [[
         [Paragraph(_escape(value), S["tile"]), Paragraph(_escape(label.upper()), S["tilel"])]
         for label, value in view.key_numbers
     ]]
-    t = Table(cells, colWidths=[4.0 * cm] * 4)
+    t = Table(cells, colWidths=[16.0 * cm / max(len(view.key_numbers), 1)] * len(view.key_numbers))
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), PANEL),
         ("BOX", (0, 0), (-1, -1), 0.5, RULE),
@@ -325,6 +325,38 @@ def _options_table(view: BriefView, S) -> Table:
         ("LINEBELOW", (0, 1), (-1, -2), 0.3, RULE),
     ]))
     return t
+
+
+def _forecast_block(view: BriefView, S) -> list:
+    """What the causal map predicts for each option, with its caveat attached."""
+    forecast = view.forecast
+    out: list = [Paragraph("WHAT THE CAUSAL MAP PREDICTS", S["h3"]),
+                 Paragraph(_escape(forecast.headline), S["body"])]
+    if not forecast.rows:
+        return out
+    header = ["Option", *forecast.outcomes, "Best in", "Note"]
+    rows = [[Paragraph(_escape(h), S["cellh"]) for h in header]]
+    for option, cells, best, note in forecast.rows:
+        rows.append(
+            [Paragraph(_escape(option), S["cell"])]
+            + [Paragraph(_escape(c), S["cell"]) for c in cells]
+            + [Paragraph(f"<b>{_escape(best)}</b>", S["cell"]),
+               Paragraph(f"<i>{_escape(note)}</i>", S["cell"])]
+        )
+    n = len(forecast.outcomes)
+    widths = [3.6 * cm] + [(8.4 * cm) / max(n, 1)] * n + [1.6 * cm, 2.4 * cm]
+    t = Table(rows, colWidths=widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("BACKGROUND", (0, 0), (-1, 0), PANEL),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.7, MUTED),
+        ("LINEBELOW", (0, 1), (-1, -2), 0.3, RULE),
+    ]))
+    return out + [t, Paragraph(_escape(forecast.caveat), S["meta"])]
 
 
 def _executive_summary(view: BriefView, S) -> list:
@@ -385,6 +417,9 @@ def _executive_summary(view: BriefView, S) -> list:
     if view.options:
         out += [Paragraph("OPTIONS AT A GLANCE", S["h3"]), _options_table(view, S),
                 Spacer(1, 0.2 * cm)]
+
+    if view.forecast is not None:
+        out += _forecast_block(view, S) + [Spacer(1, 0.2 * cm)]
 
     if view.warnings:
         out += [_panel(

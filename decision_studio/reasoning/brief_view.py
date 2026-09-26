@@ -115,6 +115,67 @@ class BriefView:
     warnings: list[str]
     key_numbers: list[tuple[str, str]]
     graph_metrics: dict[str, Any] = field(default_factory=dict)
+    forecast: "Forecast | None" = None
+
+
+STATUS_NOTES = {
+    "modelled": "",
+    "only_as_alternative": "modelled only as not choosing the others",
+    "no_path": "what it involves does not reach a success criterion on the map",
+    "not_modelled": "nothing in the map describes what it involves",
+}
+
+
+@dataclass
+class Forecast:
+    """What the causal map predicts for each option, ready to print."""
+
+    #: Column headers: one per success criterion.
+    outcomes: list[str]
+    #: (option, cells per outcome, best-in share, note)
+    rows: list[tuple[str, list[str], str, str]]
+    headline: str
+    caveat: str = (
+        "Each option was applied to the reviewed causal map (its levers switched "
+        "on, the other options' switched off) and the map propagated. Figures are "
+        "the map's belief in each success criterion, with the range when every "
+        "link strength is varied within its uncertainty; \"best in\" is the share "
+        "of those variations in which the option came out ahead. It is what the "
+        "map implies, not a forecast of the world."
+    )
+
+
+def build_forecast(data: dict[str, Any] | None) -> Forecast | None:
+    """The comparison from reasoning/option_comparison.py, as sentences and cells."""
+    if not data or not data.get("options"):
+        return None
+    labels = {o["key"]: o["label"] for o in data["options"]}
+    if data.get("unavailable"):
+        return Forecast(outcomes=[], rows=[], headline=data["unavailable"])
+    outcomes = data.get("outcomes", [])
+    rows = []
+    for option in data["options"]:
+        cells = []
+        for outcome in outcomes:
+            stats = option["outcomes"].get(outcome["key"])
+            cells.append(
+                "—" if not stats else
+                f"{pct(stats['point'])} ({pct(stats['p10'])}–{pct(stats['p90'])})"
+            )
+        rows.append((
+            f"{option['key']} {option['label']}", cells,
+            pct(option.get("p_best")), STATUS_NOTES.get(option["status"], ""),
+        ))
+    ranked = sorted(data["options"], key=lambda o: o.get("p_best") or 0.0, reverse=True)
+    leader = ranked[0]
+    if data.get("decisive"):
+        headline = (f"On the causal map, {leader['key']} ({labels[leader['key']]}) comes "
+                    f"out ahead in {pct(leader['p_best'])} of simulations.")
+    else:
+        headline = (f"The causal map does not separate the options reliably: the "
+                    f"leader, {leader['key']}, is ahead in only {pct(leader['p_best'])} "
+                    "of simulations.")
+    return Forecast(outcomes=[o["label"] for o in outcomes], rows=rows, headline=headline)
 
 
 def _rank_key(line: TheoryLine) -> tuple:
@@ -218,6 +279,12 @@ def build_view(data: dict[str, Any]) -> BriefView:
         warnings.append("No decision was stated, so the analysis describes the "
                         "situation rather than answering a choice.")
 
+    forecast = build_forecast(data.get("option_forecast"))
+    forecast_data = data.get("option_forecast") or {}
+    if forecast is not None and forecast_data.get("unavailable") and len(options) > 1:
+        warnings.append("The options could not be compared on the causal map: "
+                        + forecast_data["unavailable"])
+
     examined = sum(1 for o in options if o.status != "Not examined")
     contested = sum(1 for line in lines if line.theory.contested)
     next_due = min((t.due for t in tests if t.due), default=None)
@@ -226,6 +293,7 @@ def build_view(data: dict[str, Any]) -> BriefView:
         ("Theories", f"{len(lines)}" + (f" ({contested} contested)" if contested else "")),
         ("Open tests", str(len(tests))),
         ("Next check", next_due.strftime("%d %b %Y") if next_due else "—"),
+        ("Map favours", _map_favours(forecast_data)),
     ]
 
     return BriefView(
@@ -242,7 +310,17 @@ def build_view(data: dict[str, Any]) -> BriefView:
         warnings=warnings,
         key_numbers=key_numbers,
         graph_metrics=data.get("graph_metrics", {}),
+        forecast=forecast,
     )
+
+
+def _map_favours(data: dict[str, Any]) -> str:
+    if not data or data.get("unavailable") or not data.get("options"):
+        return "—"
+    if not data.get("decisive"):
+        return "No clear leader"
+    leader = next(o for o in data["options"] if o["key"] == data["leader"])
+    return f"{leader['key']} ({pct(leader['p_best'])})"
 
 
 def quality_lines(metrics: dict[str, Any]) -> list[str]:

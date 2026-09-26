@@ -686,3 +686,83 @@ export async function runOutsideView(
     await apiPost<OutsideViewApi>(`${base(projectId)}/outside-view`, { recollection }),
   )
 }
+
+// --- What the causal map predicts for each option ---
+
+export interface ForecastStats {
+  point: number
+  p10: number
+  p50: number
+  p90: number
+  pBest: number
+}
+
+export type OptionForecastStatus = 'modelled' | 'only_as_alternative' | 'no_path' | 'not_modelled'
+
+export interface OptionForecast {
+  key: string
+  label: string
+  status: OptionForecastStatus
+  leversOn: { claimId: string; text: string }[]
+  leversOff: { claimId: string; text: string }[]
+  reachesOutcome: boolean
+  outcomes: Record<string, ForecastStats>
+  score: number | null
+  pBest: number | null
+}
+
+export interface OptionComparison {
+  outcomes: { key: string; label: string }[]
+  options: OptionForecast[]
+  decisive: boolean
+  leader: string | null
+  runs: number
+  unavailable: string | null
+}
+
+interface OptionComparisonApi {
+  outcomes: { key: string; label: string }[]
+  options: {
+    key: string
+    label: string
+    status: OptionForecastStatus
+    levers_on: { claim_id: string; text: string }[]
+    levers_off: { claim_id: string; text: string }[]
+    reaches_outcome: boolean
+    outcomes: Record<string, { point: number; p10: number; p50: number; p90: number; p_best: number }>
+    score: number | null
+    p_best: number | null
+  }[]
+  decisive: boolean
+  leader: string | null
+  runs: number
+  unavailable: string | null
+}
+
+/** Pure computation on the reviewed graph: no model call. */
+export async function fetchOptionComparison(projectId: string): Promise<OptionComparison> {
+  const res = await apiGet<OptionComparisonApi>(`${base(projectId)}/options/compare`)
+  return {
+    outcomes: res.outcomes ?? [],
+    decisive: res.decisive,
+    leader: res.leader,
+    runs: res.runs,
+    unavailable: res.unavailable,
+    options: (res.options ?? []).map((o) => ({
+      key: o.key,
+      label: o.label,
+      status: o.status,
+      leversOn: o.levers_on.map((l) => ({ claimId: l.claim_id, text: l.text })),
+      leversOff: o.levers_off.map((l) => ({ claimId: l.claim_id, text: l.text })),
+      reachesOutcome: o.reaches_outcome,
+      score: o.score,
+      pBest: o.p_best,
+      outcomes: Object.fromEntries(
+        Object.entries(o.outcomes ?? {}).map(([k, v]) => [
+          k,
+          { point: v.point, p10: v.p10, p50: v.p50, p90: v.p90, pBest: v.p_best },
+        ]),
+      ),
+    })),
+  }
+}

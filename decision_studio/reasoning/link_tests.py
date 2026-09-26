@@ -82,6 +82,13 @@ def snapshot_graph(snapshot: GraphSnapshot) -> nx.DiGraph:
             str(edge.target_claim_id),
             strength=effective_strength(edge),
             evidence_score=edge.evidence_score,
+            # The same inputs the graph screen propagates with, so a test's
+            # leverage and an option's forecast agree with the beliefs shown.
+            has_contradiction=any(
+                ev.evidence_type == "contradicting"
+                for ev in snapshot.evidence_by_edge.get(str(edge.id), [])
+            ),
+            link_confidence=getattr(edge, "link_confidence", None),
             causal_type=getattr(edge, "causal_type", "direct") or "direct",
         )
     return break_cycles(graph)

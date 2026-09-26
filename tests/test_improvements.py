@@ -90,3 +90,76 @@ class TestOutsideView:
     def test_model_confidence_stands_in_until_a_conviction_is_stated(self):
         _, note = compare(_case(), "same", conviction=None, model_confidence=0.6)
         assert "the model's confidence" in note and note.startswith("Consistent")
+
+
+# --- What the causal map predicts for each option ---
+
+import networkx as nx  # noqa: E402
+
+from decision_studio.reasoning.option_comparison import build_comparison  # noqa: E402
+
+ANCHOR = {
+    "decision": "Commit to Q3 or Q4?",
+    "options": [{"key": "O1", "label": "Commit to Q3"}, {"key": "O2", "label": "Commit to Q4"}],
+    "outcomes": [{"key": "Y1", "label": "Ship on the committed date"}],
+}
+
+
+def _claim_row(cid, role, bears, origin="extraction"):
+    return SimpleNamespace(id=cid, text=cid, decision_role=role, bears_on=bears, origin=origin)
+
+
+def _q3_graph():
+    """Q3 compresses testing, which threatens the date; Q4 adds slack, which helps it."""
+    g = nx.DiGraph()
+    for node in ("compress", "slack", "defects", "y1"):
+        g.add_node(node, prior=0.5)
+    g.add_node("vendor", prior=0.3)  # a contingency either way
+    kw = dict(evidence_score=0.5, link_confidence=0.8, causal_type="direct")
+    g.add_edge("compress", "defects", strength=0.8, **kw)
+    g.add_edge("defects", "y1", strength=0.7, causal_type="inhibiting",
+               evidence_score=0.5, link_confidence=0.8)
+    g.add_edge("slack", "y1", strength=0.8, **kw)
+    g.add_edge("vendor", "y1", strength=0.3, **kw)
+    claims = [
+        _claim_row("compress", "lever", ["O1"]),
+        _claim_row("slack", "lever", ["O2"]),
+        _claim_row("defects", "mechanism", []),
+        _claim_row("vendor", "contingency", ["O1", "O2"]),
+        _claim_row("y1", "outcome", ["Y1"], origin="frame"),
+    ]
+    return g, claims
+
+
+class TestOptionComparison:
+    def test_each_option_is_an_intervention_on_its_levers(self):
+        graph, claims = _q3_graph()
+        result = build_comparison(graph, claims, ANCHOR, runs=200)
+        q3, q4 = result.options
+        assert [c for c, _ in q3.levers_on] == ["compress"]
+        assert [c for c, _ in q3.levers_off] == ["slack"]
+        assert q3.status == q4.status == "modelled"
+        # Q4: slack on, no compression. Q3: compression on, no slack.
+        assert q4.outcomes["Y1"]["point"] > q3.outcomes["Y1"]["point"]
+        assert q4.p_best > 0.9 and result.decisive and result.leader == "O2"
+        assert q3.p_best + q4.p_best == pytest.approx(1.0)
+        # The caller's graph is untouched.
+        assert graph.nodes["compress"]["prior"] == 0.5 and graph.in_degree("compress") == 0
+
+    def test_identical_options_are_a_tie_not_a_finding(self):
+        graph, claims = _q3_graph()
+        for claim in claims:
+            if claim.decision_role == "lever":
+                claim.decision_role = "mechanism"
+        result = build_comparison(graph, claims, ANCHOR, runs=50)
+        assert result.unavailable and "cannot tell the options apart" in result.unavailable
+
+    def test_a_lever_with_no_path_to_success_is_said_so(self):
+        graph, claims = _q3_graph()
+        graph.remove_edge("slack", "y1")
+        claims[0].bears_on = ["O1", "O2"]  # compression now comes with either option
+        result = build_comparison(graph, claims, ANCHOR, runs=50)
+        q3, q4 = result.options
+        assert q4.status == "no_path" and q4.reaches_outcome is False
+        assert q3.status == "no_path"  # it only switches slack off, which leads nowhere
+        assert q3.p_best == pytest.approx(0.5)  # indistinguishable: a tie
