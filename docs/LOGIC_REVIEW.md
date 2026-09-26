@@ -43,6 +43,8 @@ patches strengths and the stability module already runs Monte Carlo
 cut its incoming edges (a do-intervention), propagate, and report P(Y) per
 outcome with its interval, plus how often O1 beats O2 across samples ("win
 rate"). That becomes the first table of the brief. Cost: no model calls.
+`graph/stability.py::rank_stability` (marked DC-16) already ranks several option
+graphs with a win rate; keep it if this is built.
 
 ### 2. Correlated evidence is counted as independent (high)
 
@@ -76,9 +78,11 @@ existing statistical check on it; record the result as evidence on the link.
 
 ### 5. `recompute_beliefs` does nothing (medium)
 
-`POST /recompute` (DC-23) propagates and discards the result; beliefs are
-recomputed on every graph read anyway. The button suggests something happens.
-Remove it, or make it persist a snapshot the conviction trail can reference.
+`POST /recompute` (DC-23) propagates and discards the result. The frontend calls
+it after every added claim or link (`hooks/useReasoning.ts`), then reloads the
+graph, and that reload recomputes beliefs anyway. So each addition pays for a
+full graph load and propagation that nothing uses. Remove the call and the
+endpoint, or make it persist a snapshot the conviction trail can reference.
 
 ### 6. Noisy-OR assumes independent causes (medium)
 
@@ -100,11 +104,13 @@ puts model impact first.
 *Proposal*: rank everywhere by (reaches an outcome, leverage × uncertainty of its
 weakest link, conviction), which are all things the analysis measured.
 
-### 8. Likelihood ratios are uncalibrated (low-medium)
+### 8. Tripwire and link-test weights are fixed (low-medium)
 
-The ratios for "confirms / refutes / inconclusive" are constants. They are
-reasonable, but a refuted tripwire the decider defined as decisive should move
-conviction more than one they called weak.
+Evidence the decider enters by hand uses a five-step verbal scale. Tripwires and
+link tests do not: a fired falsifier is always x0.25, a refuted link x0.25, a
+held link x2 (`theory_value.tripwire_likelihood`, `link_tests.py`). A tripwire
+the decider wrote as "if this happens I drop the plan" moves conviction as much
+as one they wrote as a weak signal.
 
 *Proposal*: ask "how decisive would this be?" (three levels) when the tripwire
 or link test is written and map it to the ratio.

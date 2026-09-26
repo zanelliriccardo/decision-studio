@@ -72,7 +72,7 @@ tables must stay: migrations are history.
 | DC-13 | `evidence/nli_scorer.py` `score_evidence_nli` | No callers | high |
 | DC-14 | `exceptions.py` `ValidationError` | Never raised or caught | high |
 | DC-15 | `graph/belief_propagation.py` `compute_belief_intervals` | Docstring says DEPRECATED; replaced by `graph/stability.py` | high |
-| DC-16 | `graph/stability.py` `rank_stability` | No callers | high |
+| DC-16 | `graph/stability.py` `rank_stability` | No callers, but it is the building block for option comparison (LOGIC_REVIEW part 2, item 1) | decide |
 | DC-17 | `llm/cache.py` `cache_stats` | No callers | high |
 | DC-18 | `llm/model_params.py` `reset_cache` | No callers (likely a helper for tests not in the repo) | medium |
 | DC-19 | `reasoning/calibration.py` `band_range`, `round_for_display`, `interval_is_informative` | No callers | high |

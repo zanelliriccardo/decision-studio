@@ -390,7 +390,7 @@ class RankStability:
         }
 
 
-# DEAD-CODE-CANDIDATE DC-16: no callers. See docs/DEAD_CODE_REPORT.md
+# DEAD-CODE-CANDIDATE DC-16: no callers, but needed for option comparison (LOGIC_REVIEW item 1). See docs/DEAD_CODE_REPORT.md
 def rank_stability(
     options: dict[str, nx.DiGraph],
     outcome_nodes: list[str],
