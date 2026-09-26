@@ -148,3 +148,101 @@ and **Information that could reduce decision uncertainty**.
   calibrated values.
 * Theories bound to no option do not appear in "what would change my mind".
 * Field tests carry no decisiveness yet; their default ratios apply.
+
+---
+
+# Part 2: the decision workspace
+
+Five more views on the same graph and the same comparison. Router:
+`api/routes/decision_workspace.py`. Migration `026` adds nullable columns only.
+
+## 5. Assumption register (`reasoning/assumptions.py`)
+
+`GET /graph/{id}/assumptions`. An assumption is an **existing claim** in the
+reviewed graph that the options do not set themselves (not a lever an option
+switches, not a success criterion) and that has a causal path to a success
+criterion. Nothing is added to the graph.
+
+Per assumption: current belief (propagated, as on the graph screen), related
+options (`bears_on` and the theories citing it), success criteria it reaches,
+a summary of the documents on its links (see §6), whether a citing theory is out
+of date or the claim was marked "needs evidence", its sensitivity-driver rank,
+and whether moving it within its plausible range could materially alter the
+comparison (it can reverse or close the gap, or moves it by 5 points or more on
+the weighted view or on any criterion).
+
+`priority = uncertainty × influence`, with `uncertainty = 4b(1−b)` and
+influence the largest gap movement it causes (weighted view or any single
+criterion) in points ÷ 20, capped at 1, × 1 / 0.75 / 0.5 for can-reverse /
+can-close / neither. A claim that moves every option similarly but not the gap
+is kept at a quarter of the weight and labelled "affects all options similarly".
+Without a comparison, the model's relevance score stands in, and the register
+says so. Top 8 shown.
+
+## 6. Evidence quality (`reasoning/evidence_quality.py`)
+
+Descriptive labels, no new score. For retrieved **documents** (graph evidence
+panel, report theory sections, assumption register): recent (< 1 year) / N
+years old / undated; supports / contradicts; independent / same source as N
+others (same site, or same title for internal documents); direct (relevance ≥
+0.7) / indirect; interested source / against the author's interest. For
+**observations** that moved a conviction (theory panel history): tripwire /
+link test / field test; recent (< 90 days) / N months ago; supports /
+contradicts / inconclusive (likelihood ratio above 1.05 / below 0.95 / between);
+independent / same event as another observation / event not named; the
+decisiveness stated in advance; already in the stated conviction.
+
+## 7. Decision journal (`reasoning/decision_timeline.py`)
+
+`GET /graph/{id}/timeline`. Only records that carry their own timestamp:
+project creation, the review audit log (`graph_operation`), theory revisions,
+conviction priors, tripwire / link-test / field-test results (each with the
+conviction it moved, before → after), comparable cases. Option-comparison and
+priority changes had no history, so they are journalled in the existing
+`event_timeline` table (`source = "decision_journal"`): a comparison entry is
+written when the comparison is *viewed* and an option-implied outcome has moved
+5 points or more, or the weighted verdict changed, since the last entry — its
+date is when the change was first seen, and it says so. Material events (default
+view): conviction moved ≥ 10 points, a fired falsifier, a refuted link, a
+comparison, priority, scenario or sub-decision change, new or dropped theories.
+
+## 8. Scenarios (`reasoning/decision_scenarios.py`)
+
+`GET /graph/{id}/decision-scenarios`, `PUT`/`DELETE …/decision-scenarios/{upside|downside}`.
+Base case = the reviewed graph. Upside / downside change a handful of existing
+inputs and rerun the comparison (`build_comparison`, 100 simulations, no
+drivers) on a throwaway copy of the snapshot graph; nothing is stored but the
+overrides.
+
+* **Automatic**: the 5 inputs from the sensitivity run that move the *level*
+  of the weighted view most (averaged over options), each at the end of its
+  plausible range that raises (upside) or lowers (downside) it — a kinder or
+  harsher world for every option, not a thumb on the scale for one.
+* **The decider's**: stored as a row of the existing `scenario` table
+  (`decision_case`, `edge_overrides` by edge id, `claim_overrides` by claim id;
+  only root claims' likelihood can be set). The scenario-fork list excludes
+  these rows. Reset returns to automatic.
+
+## 9. Sub-decisions (`reasoning/sub_decisions.py`)
+
+`GET`/`PUT /graph/{id}/sub-decisions`, stored on `project.sub_decisions`. A
+sub-decision hangs under one parent option and has 2–4 choices, each defined by
+existing claims. Each choice is evaluated as `do(parent's levers) + do(its
+claims = true) + do(the other choices' claims = false)` and the choices are
+compared with the existing Monte Carlo under the decider's priorities, with the
+same robustness vocabulary. The main comparison is unchanged: it evaluates each
+option with its sub-choices as the map has them.
+
+## V1 simplifications (part 2)
+
+* Assumptions are claims, not links; a link's uncertainty shows through the
+  claims at either end.
+* Document age comes from `published_date`; evidence rows have no retrieval
+  date, so undated documents stay "undated".
+* The journal cannot reconstruct comparison history before this feature: the
+  first comparison entry is dated when it was first viewed.
+* Only three scenarios (base, upside, downside). Automatic cases use
+  one-at-a-time plausible ranges, so combined extremes can be more severe than
+  any single one suggests.
+* Sub-decisions are one level deep; choices are evaluated one sub-decision at a
+  time (no combinations across sub-decisions).

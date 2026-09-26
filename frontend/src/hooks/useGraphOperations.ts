@@ -70,6 +70,7 @@ export function transformApiGraph(api: Record<string, unknown>): CausalGraph {
       relevanceScore: ev.relevance_score as number,
       credibilityScore: ev.credibility_score as number,
       sourceTier: (ev.source_tier as number) ?? 4,
+      quality: (ev.quality as NonNullable<CausalGraph['edges'][0]['evidences'][0]['quality']>) ?? [],
     })),
     reviewStatus: ((e.review_status as string) ?? 'accepted') as CausalGraph['edges'][0]['reviewStatus'],
     isActive: (e.is_active as boolean) ?? true,

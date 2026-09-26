@@ -88,7 +88,7 @@ tables must stay: migrations are history.
 | DC-24 | `api/routes/causal_analysis.py` (3 `deprecated_*` endpoints) and `pipeline/three_layer_engine.py` | Screen removed; the URL was kept on purpose as a public contract (HANDOVER §6). Remove once you know nothing external calls it | medium |
 | DC-25 | `POST /analyze/{id}/resume` | Checkpoint resume is not reachable from the UI | medium |
 | DC-26 | `PATCH /edge/{edge_id}` | No caller, and it **bypasses the review audit log**: strength edits should go through `PATCH …/edges/{id}/review` | medium (worth removing: it's an unaudited write path) |
-| DC-27 | `api/routes/events.py` (whole `/api/v1/events` router) | No caller | medium |
+| DC-27 | `api/routes/events.py` (whole `/api/v1/events` router) | No caller. The `event_timeline` **table** is now used by the decision journal (`reasoning/decision_timeline.py`, source `decision_journal`); only the router is a candidate | medium |
 | DC-28 | `POST …/experiments/synthetic`, `POST …/experiments/{id}/execute` | Synthetic stakeholder experiments have no UI | decide: wire into the theory panel or remove |
 | ~~DC-29~~ | `POST/GET …/outside-view` | **No longer a candidate**: wired to the summary page's comparable-cases box | — |
 | DC-30 | tables `multi_layer_evidence`, `metric_series` | Written only by DC-24. Dropping needs a migration | medium |

@@ -51,6 +51,7 @@ from decision_studio.reasoning.effective_graph import filter_effective
 from decision_studio.reasoning.link_tests import list_hypotheses
 from decision_studio.reasoning.theory_value import convictions
 from decision_studio.tools.anchor_report import compute_report
+from decision_studio.reasoning.evidence_quality import document_labels
 from decision_studio.reasoning.brief_view import (
     TestItem, TheoryLine, build_view, outside_view_note, pct, quality_lines,
 )
@@ -148,7 +149,7 @@ async def _gather(session: AsyncSession, project_id: UUID) -> dict[str, Any]:
         "hypotheses": await list_hypotheses(session, project_id),
         "field_tests": field_tests,
         "graph_metrics": graph_metrics,
-        "option_forecast": await _option_forecast(session, project_id),
+        **await _decision_workspace(session, project_id),
         "mind_changers": await _mind_changers(session, project_id),
         # The synthesised advice was missing from this document entirely, which
         # meant the export omitted the one thing a reader outside the analysis
@@ -168,15 +169,39 @@ async def _gather(session: AsyncSession, project_id: UUID) -> dict[str, Any]:
     }
 
 
-async def _option_forecast(session: AsyncSession, project_id: UUID) -> dict[str, Any] | None:
-    """What the causal map predicts per option. Pure computation; never blocks the brief."""
-    from decision_studio.reasoning.option_comparison import compare_project_options
+async def _decision_workspace(session: AsyncSession, project_id: UUID) -> dict[str, Any]:
+    """The option comparison and everything computed from it, once.
 
+    Pure computation. Each part is optional: a brief without one section beats
+    no brief, so a failure is logged and the section left out.
+    """
+    from decision_studio.reasoning.assumptions import assumption_register
+    from decision_studio.reasoning.decision_scenarios import project_scenarios
+    from decision_studio.reasoning.decision_timeline import decision_timeline
+    from decision_studio.reasoning.option_comparison import compare_project_options
+    from decision_studio.reasoning.sub_decisions import project_sub_decisions
+
+    out: dict[str, Any] = {"option_forecast": None, "assumptions": None, "scenarios": None,
+                           "sub_decisions": [], "timeline": None}
     try:
-        return (await compare_project_options(session, project_id)).as_dict()
-    except Exception:  # noqa: BLE001 - a brief without the table beats no brief
+        comparison = await compare_project_options(session, project_id)
+        out["option_forecast"] = comparison.as_dict()
+    except Exception:  # noqa: BLE001
         logger.exception("Option comparison failed for the brief of %s", project_id)
-        return None
+        comparison = None
+    for key, compute in (
+        ("assumptions", lambda: assumption_register(session, project_id, comparison)),
+        ("scenarios", lambda: project_scenarios(session, project_id, comparison)),
+        ("sub_decisions", lambda: project_sub_decisions(session, project_id)),
+        ("timeline", lambda: decision_timeline(session, project_id)),
+    ):
+        if comparison is None and key in ("assumptions", "scenarios"):
+            continue
+        try:
+            out[key] = await compute()
+        except Exception:  # noqa: BLE001
+            logger.exception("%s failed for the brief of %s", key, project_id)
+    return out
 
 
 async def _mind_changers(session: AsyncSession, project_id: UUID) -> list[dict[str, Any]]:
@@ -271,10 +296,16 @@ def _theory_section(
     ]
     if supporting or contradicting:
         lines += ["#### Evidence", ""]
+
+        def quality(ev: Evidence) -> str:
+            edge = data["edges"].get(str(ev.edge_id))
+            labels = document_labels(ev, list(edge.evidences) if edge is not None else [ev])
+            return " · ".join(label["text"] for label in labels)
+
         for ev in supporting:
-            lines.append(f"- **Supports:** {ev.snippet} — *{ev.source_title}*")
+            lines.append(f"- **Supports:** {ev.snippet} — *{ev.source_title}* ({quality(ev)})")
         for ev in contradicting:
-            lines.append(f"- **Contradicts:** {ev.snippet} — *{ev.source_title}*")
+            lines.append(f"- **Contradicts:** {ev.snippet} — *{ev.source_title}* ({quality(ev)})")
         lines.append("")
 
     if live_objections:
@@ -403,6 +434,19 @@ def build_markdown(data: dict[str, Any]) -> str:
                     lines.append(f"| {option} | " + " | ".join(cells) + f" | {total} |")
                 lines += ["", f"*{forecast.weighted_caveat}*", ""]
 
+    if view.scenarios is not None:
+        sv = view.scenarios
+        lines += ["## Scenarios", "", f"*{sv.caveat}*", "",
+                  "| Option | " + " | ".join(sv.cases) + " |", "|---" * (len(sv.cases) + 1) + "|"]
+        lines += [f"| {option} | " + " | ".join(cells) + " |" for option, cells in sv.rows]
+        lines += ["", f"Figures: {sv.measure}.", ""]
+        for case, source, changes in sv.changes:
+            if changes:
+                lines.append(f"- **{case}** ({source} assumptions): " + "; ".join(changes))
+        lines.append("")
+    if view.sub_decisions:
+        lines += ["## Sub-decisions", ""] + [f"- {s}" for s in view.sub_decisions] + [""]
+
     # ── 2b. How solid the comparison is ─────────────────────────────────────
     robustness = view.robustness
     if robustness is not None:
@@ -414,6 +458,16 @@ def build_markdown(data: dict[str, Any]) -> str:
         if robustness.flips:
             lines += ["**What could flip it**", ""] + [f"- {r}" for r in robustness.flips] + [""]
         lines += [f"*{robustness.method}*", ""]
+    if view.assumptions:
+        lines += ["## Assumptions the decision rests on", "",
+                  "Existing claims from the reviewed map, uncertain and influential first.", ""]
+        for a in view.assumptions:
+            lines.append(f"- **{a.text}** — belief {a.belief}"
+                         + (f"; {', '.join(a.flags)}" if a.flags else "")
+                         + (f". Evidence: {a.evidence}" if a.evidence else ""))
+        if view.assumptions_note:
+            lines += ["", f"*{view.assumptions_note}*"]
+        lines.append("")
 
     # ── 3. What would change it ─────────────────────────────────────────────
     if view.mind_changers:
@@ -449,6 +503,12 @@ def build_markdown(data: dict[str, Any]) -> str:
             evidence = len([s for s in conviction.steps if s.applied])
             lines.append(f"- {line.title}: {pct(conviction.prior)}{moved} "
                          f"({evidence} observation(s))")
+        lines.append("")
+
+    if view.journal:
+        lines += ["## Decision journal", "",
+                  "What was believed, and what changed it (material events, newest first).", ""]
+        lines += [f"- {date} — {title}" + (f": {change}" if change else "") for date, title, change in view.journal]
         lines.append("")
 
     # ── 4. The reasoning ────────────────────────────────────────────────────

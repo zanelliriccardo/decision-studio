@@ -24,6 +24,7 @@ import ConvictionElicitor from './ConvictionElicitor.tsx'
 import EventField from './EventField.tsx'
 import DecisivenessPicker from './DecisivenessPicker.tsx'
 import DataTestForm from './DataTestForm.tsx'
+import QualityChips from '../evidence/QualityChips.tsx'
 
 const pct = (p: number | null | undefined) => (p == null ? '' : `${Math.round(p * 100)}%`)
 
@@ -222,6 +223,9 @@ export default function TheoryValueSection({
                   </span>
                 )}
                 {step.note && <span className="block text-text-muted">{step.note}</span>}
+                {step.quality.length > 0 && (
+                  <span className="block mt-0.5"><QualityChips labels={step.quality} /></span>
+                )}
               </li>
             ))}
           </ul>

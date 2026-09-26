@@ -138,6 +138,8 @@ export interface Evidence {
   relevanceScore: number
   credibilityScore: number
   sourceTier: number
+  /** Descriptive labels: recent, independent, direct, ... */
+  quality?: { key: string; text: string; tone: 'good' | 'neutral' | 'caution' }[]
 }
 
 

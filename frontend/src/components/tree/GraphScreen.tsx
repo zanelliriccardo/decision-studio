@@ -81,6 +81,7 @@ interface ApiEvidence {
   source_tier?: number
   freshness_score?: number
   published_date?: string | null
+  quality?: { key: string; text: string; tone: 'good' | 'neutral' | 'caution' }[]
 }
 
 interface ApiEdge {
@@ -139,6 +140,7 @@ function transformEvidence(api: ApiEvidence): Evidence {
     relevanceScore: api.relevance_score,
     credibilityScore: api.credibility_score,
     sourceTier: api.source_tier ?? 4,
+    quality: api.quality ?? [],
   }
 }
 

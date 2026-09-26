@@ -118,6 +118,8 @@ export interface ConvictionStep {
   event: string | null
   /** Set when another observation of the same event is the one counted. */
   duplicateOf: string | null
+  /** Descriptive labels: recent, independent, decisive, ... (reasoning/evidence_quality.py) */
+  quality: { key: string; text: string; tone: 'good' | 'neutral' | 'caution' }[]
 }
 
 export interface Conviction {
@@ -137,6 +139,7 @@ interface ApiConviction {
     id: string; likelihood_ratio: number; source: string; note: string | null
     created_at: string | null; applied: boolean; after: number | null
     event?: string | null; duplicate_of?: string | null
+    quality?: { key: string; text: string; tone: 'good' | 'neutral' | 'caution' }[]
   }>
 }
 
@@ -149,6 +152,7 @@ const toConviction = (api: ApiConviction): Conviction => ({
     id: s.id, likelihoodRatio: s.likelihood_ratio, source: s.source, note: s.note,
     createdAt: s.created_at, applied: s.applied, after: s.after,
     event: s.event ?? null, duplicateOf: s.duplicate_of ?? null,
+    quality: s.quality ?? [],
   })),
 })
 

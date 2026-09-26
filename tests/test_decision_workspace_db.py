@@ -142,3 +142,16 @@ async def test_observations_carry_quality_labels(session):
     conviction = await get_conviction(project.id, theory.theory_key, session)
     keys = {label["key"] for label in conviction.steps[0].quality}
     assert {"kind", "recent", "contradicts", "independent", "decisive"} <= keys
+
+
+async def test_the_report_carries_the_workspace(session):
+    from decision_studio.reasoning.brief import export_brief
+
+    project, theories = await _anchored_project_with_theories(session)
+    await theory_value.state_prior(session, project.id, theories[VENDOR].theory_key, 0.6)
+    markdown, _, _ = await export_brief(session, project.id, "markdown")
+    assert "## Decision journal" in markdown and "Analysis created" in markdown
+    if "## Scenarios" in markdown:
+        assert "not forecasts" in markdown
+    pdf, media, _ = await export_brief(session, project.id, "pdf")
+    assert media == "application/pdf" and pdf.startswith(b"%PDF")

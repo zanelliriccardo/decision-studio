@@ -120,6 +120,12 @@ class BriefView:
     mind_changers: list["MindChangerView"] = field(default_factory=list)
     #: (action, why) for the top information needs.
     information: list[tuple[str, str]] = field(default_factory=list)
+    assumptions: list["AssumptionLine"] = field(default_factory=list)
+    assumptions_note: str | None = None
+    scenarios: "ScenarioView | None" = None
+    sub_decisions: list[str] = field(default_factory=list)
+    #: (date, title, what it changed), material events, newest first.
+    journal: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 STATUS_NOTES = {
@@ -257,6 +263,103 @@ def build_forecast(data: dict[str, Any] | None) -> Forecast | None:
         rows=rows, headline=headline, priorities_line=priorities_line,
         weighted_rows=weighted_rows,
     )
+
+
+@dataclass
+class AssumptionLine:
+    text: str
+    belief: str
+    flags: list[str]
+    evidence: str
+
+
+def build_assumptions(register: dict[str, Any] | None, limit: int = 5) -> tuple[list[AssumptionLine], str | None]:
+    """The assumptions most at stake, one line each."""
+    if not register:
+        return [], None
+    lines = []
+    for row in register.get("assumptions", [])[:limit]:
+        flags = []
+        if row.get("driver_rank"):
+            flags.append(f"sensitivity driver #{row['driver_rank']}")
+        if row.get("can_alter"):
+            flags.append("could change the comparison")
+        elif row.get("affects") == "all_options":
+            flags.append("affects all options similarly")
+        if row.get("stale"):
+            flags.append("cited by an out-of-date theory")
+        if row.get("needs_evidence"):
+            flags.append("needs evidence")
+        if row.get("outcomes"):
+            flags.append("reaches " + ", ".join(row["outcomes"]))
+        evidence = " · ".join(label["text"] for label in row.get("evidence", {}).get("labels", []))
+        lines.append(AssumptionLine(row["text"], pct(row.get("belief")), flags, evidence))
+    note = None
+    if register.get("influence_basis") == "relevance":
+        note = "No option comparison could be made, so influence is the model's relevance score."
+    elif register.get("total", 0) > len(lines):
+        note = f"{register['total'] - len(lines)} further assumption(s) in the map, with less at stake."
+    return lines, note
+
+
+@dataclass
+class ScenarioView:
+    cases: list[str]
+    #: (option, cell per case) — weighted view, or the first criterion when there is none.
+    rows: list[tuple[str, list[str]]]
+    measure: str
+    #: (case label, "automatic"/"the decider's", ["input: base → value"])
+    changes: list[tuple[str, str, list[str]]]
+    caveat: str = ("Scenario assumptions, not forecasts: each case reruns the option comparison on "
+                   "the same causal map with only the inputs listed changed.")
+
+
+def build_scenarios(data: dict[str, Any] | None) -> ScenarioView | None:
+    if not data or data.get("unavailable") or not data.get("cases"):
+        return None
+    cases = data["cases"]
+    first_outcome = (data.get("outcomes") or [{}])[0].get("key")
+    use_weighted = any(o.get("weighted") is not None for o in cases[0]["options"])
+    rows = []
+    for option in cases[0]["options"]:
+        cells = []
+        for case in cases:
+            row = next((o for o in case["options"] if o["key"] == option["key"]), None)
+            if row is None:
+                cells.append("—")
+            elif use_weighted:
+                cells.append("—" if row["weighted"] is None else f"{round(row['weighted'] * 100)} / 100")
+            else:
+                cells.append(pct((row["outcomes"].get(first_outcome) or {}).get("point")))
+        rows.append((f"{option['key']} {option['label']}", cells))
+    changes = [
+        (case["label"], "the decider's" if case["source"] == "user" else "automatic",
+         [f"{a['label']}: {pct(a['base'])} → {pct(a['value'])}" for a in case["assumptions"]])
+        for case in cases[1:]
+    ]
+    return ScenarioView(
+        cases=[c["label"] for c in cases], rows=rows,
+        measure="weighted view" if use_weighted else f"{first_outcome} (model-implied)",
+        changes=changes,
+    )
+
+
+def build_sub_decisions(items: list[dict[str, Any]] | None) -> list[str]:
+    out = []
+    for sd in items or []:
+        head = f"{sd['parent']} {sd.get('parent_label', '')} → {sd['label']}: "
+        out.append(head + (sd.get("unavailable") or sd.get("sentence") or "no weighted view"))
+    return out
+
+
+def build_journal(timeline: dict[str, Any] | None, limit: int = 8) -> list[tuple[str, str, str]]:
+    if not timeline:
+        return []
+    material = [e for e in timeline.get("events", []) if e.get("material")]
+    return [
+        (e["at"][:10], e["title"], e.get("belief_change") or e.get("detail") or "")
+        for e in reversed(material[-limit:])
+    ]
 
 
 def _headline_pair(data: dict[str, Any]) -> dict[str, Any] | None:
@@ -460,6 +563,11 @@ def build_view(data: dict[str, Any]) -> BriefView:
         robustness=build_robustness(forecast_data),
         mind_changers=build_mind_changers(data.get("mind_changers")),
         information=[(i["action"], i["why"]) for i in forecast_data.get("information_priority", [])[:3]],
+        assumptions=build_assumptions(data.get("assumptions"))[0],
+        assumptions_note=build_assumptions(data.get("assumptions"))[1],
+        scenarios=build_scenarios(data.get("scenarios")),
+        sub_decisions=build_sub_decisions(data.get("sub_decisions")),
+        journal=build_journal(data.get("timeline")),
     )
 
 

@@ -162,6 +162,17 @@ Two corrections made along the way:
 * A 3-point movement was labelled "high impact" in information priority when
   impact was relative to the largest driver. Impact is now absolute.
 
+## Part 4: the decision workspace
+
+Assumption register, evidence quality labels, decision journal, base / upside /
+downside scenarios and sub-decisions, all on the same graph and option
+comparison: `docs/DECISION_VIEW.md`, part 2. Tests:
+`tests/test_decision_workspace.py`, `tests/test_decision_workspace_db.py`,
+frontend `components/summary/__tests__/DecisionWorkspace.test.tsx`. Migration
+`026` (nullable columns only). The existing `scenario` table stores the
+decider's upside/downside assumptions (`decision_case`); the existing
+`event_timeline` table stores journal entries for changes nothing else records.
+
 ## Report for managers and executives
 
 The brief (Markdown, HTML, PDF) was re-ordered to be read answer-first

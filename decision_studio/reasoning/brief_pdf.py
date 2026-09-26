@@ -376,7 +376,29 @@ def _forecast_block(view: BriefView, S) -> list:
                      Paragraph(_escape(forecast.weighted_caveat), S["meta"])]
     # Heading, priorities, sentence and table on one page: split, the numbers
     # would lose the priorities that give them their meaning.
-    return out + [KeepTogether(weighted)]
+    out.append(KeepTogether(weighted))
+    return out + _scenario_block(view, S)
+
+
+def _scenario_block(view: BriefView, S) -> list:
+    """Base / upside / downside, and sub-decisions: short, with their assumptions."""
+    out: list = []
+    sv = view.scenarios
+    if sv is not None:
+        block: list = [Paragraph("SCENARIOS", S["h3"]), Paragraph(_escape(sv.caveat), S["meta"])]
+        rows = [[Paragraph(_escape(h), S["cellh"]) for h in ["Option", *sv.cases]]]
+        rows += [[Paragraph(_escape(option), S["cell"])] + [Paragraph(_escape(c), S["cell"]) for c in cells]
+                 for option, cells in sv.rows]
+        block.append(_grid(rows, [4.0 * cm] + [12.0 * cm / max(len(sv.cases), 1)] * len(sv.cases)))
+        block.append(Paragraph(f"Figures: {_escape(sv.measure)}.", S["meta"]))
+        changes = [f"<b>{_escape(case)}</b> ({_escape(source)}): {_escape('; '.join(items))}"
+                   for case, source, items in sv.changes if items]
+        if changes:
+            block.append(_bullets(changes, S["body"], escape=False))
+        out.append(KeepTogether(block))
+    if view.sub_decisions:
+        out += [Paragraph("SUB-DECISIONS", S["h3"]), _bullets(view.sub_decisions, S["body"])]
+    return out
 
 
 def _decision_view_section(view: BriefView, S) -> list:
@@ -392,6 +414,17 @@ def _decision_view_section(view: BriefView, S) -> list:
             if items:
                 out += [Paragraph(title, S["h3"]), _bullets(items, S["body"])]
         out.append(Paragraph(_escape(robustness.method), S["meta"]))
+    if view.assumptions:
+        out.append(Paragraph("Assumptions the decision rests on", S["h1"]))
+        out.append(Paragraph("Existing claims from the reviewed map, uncertain and influential first.", S["meta"]))
+        out.append(_bullets([
+            f"<b>{_escape(a.text)}</b> — belief {_escape(a.belief)}"
+            + (f"; {_escape(', '.join(a.flags))}" if a.flags else "")
+            + (f"<br/><i>Evidence: {_escape(a.evidence)}</i>" if a.evidence else "")
+            for a in view.assumptions
+        ], S["body"], escape=False))
+        if view.assumptions_note:
+            out.append(Paragraph(_escape(view.assumptions_note), S["meta"]))
     if view.mind_changers:
         out.append(Paragraph("What would change my mind", S["h1"]))
         out.append(Paragraph(
@@ -488,6 +521,13 @@ def _executive_summary(view: BriefView, S) -> list:
 def _tests_section(view: BriefView, S) -> list:
     """What could still change the answer, as a list someone can commission."""
     out: list = _decision_view_section(view, S) + [Paragraph("Tests and tripwires", S["h1"])]
+    journal: list = []
+    if view.journal:
+        journal = [Paragraph("Decision journal", S["h1"]),
+                   Paragraph("What was believed, and what changed it (material events, newest first).", S["meta"]),
+                   _bullets([f"<b>{_escape(date)}</b> — {_escape(title)}"
+                             + (f": {_escape(change)}" if change else "")
+                             for date, title, change in view.journal], S["body"], escape=False)]
     if view.tests:
         out.append(Paragraph(
             "Run these before committing. Tests on links are ranked by how much the "
@@ -539,7 +579,7 @@ def _tests_section(view: BriefView, S) -> list:
             ("LINEBELOW", (0, 1), (-1, -2), 0.3, RULE),
         ]))
         out.append(t)
-    return out
+    return out + journal
 
 
 def build_pdf(data: dict[str, Any]) -> bytes:

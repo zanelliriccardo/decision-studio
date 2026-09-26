@@ -22,6 +22,10 @@ import DecisionPrioritiesCard from './DecisionPrioritiesCard.tsx'
 import RobustnessCard from './RobustnessCard.tsx'
 import MindChangersCard from './MindChangersCard.tsx'
 import InformationPriorityCard from './InformationPriorityCard.tsx'
+import AssumptionsCard from './AssumptionsCard.tsx'
+import ScenariosCard from './ScenariosCard.tsx'
+import SubDecisionsCard from './SubDecisionsCard.tsx'
+import TimelineCard from './TimelineCard.tsx'
 
 /**
  * Where an analysis lands: the conclusions, written out.
@@ -232,6 +236,17 @@ export default function DecisionSummary() {
             onChanged={setComparison}
           />
           <OptionForecastCard comparison={comparison} />
+          {/* The same comparison under explicit assumptions, and inside each
+              option. Refreshed with the comparison (priorities change both). */}
+          <ScenariosCard projectId={projectId} refreshKey={comparison} />
+          {anchor && (
+            <SubDecisionsCard
+              projectId={projectId}
+              options={anchor.options}
+              claims={claims}
+              refreshKey={comparison.priorities}
+            />
+          )}
         </>
       )}
 
@@ -341,6 +356,7 @@ export default function DecisionSummary() {
       {/* After the answer, before the full theories: how solid the comparison
           is, what could change it, and where more information would help. */}
       {projectId && comparison && <RobustnessCard comparison={comparison} />}
+      {projectId && comparison && <AssumptionsCard projectId={projectId} refreshKey={comparison} />}
       {projectId && ranked.length > 0 && (
         <MindChangersCard projectId={projectId} refreshKey={theories} />
       )}
@@ -581,6 +597,9 @@ export default function DecisionSummary() {
           }}
         />
       )}
+
+      {/* How the decision got here: what was believed and what changed it. */}
+      {projectId && <TimelineCard projectId={projectId} refreshKey={comparison ?? theories} />}
 
       {/* Below the conclusions: operational information, not a finding. */}
       <UsagePanel usage={usage} />

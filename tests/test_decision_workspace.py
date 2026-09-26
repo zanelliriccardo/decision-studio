@@ -263,3 +263,48 @@ class TestSubDecisionEvaluation:
                           OPTIONS, USABLE | {"canteen", "rebrand"}, strict=True)
         (result,) = evaluate(g, claims, ANCHOR, [sd], runs=10)
         assert "no causal path" in result["unavailable"] or "cannot tell them apart" in result["unavailable"]
+
+
+# ── The report ──────────────────────────────────────────────────────────────
+
+from decision_studio.reasoning.brief_view import (  # noqa: E402
+    build_assumptions,
+    build_journal,
+    build_scenarios as view_scenarios,
+    build_sub_decisions,
+)
+
+
+class TestReportSections:
+    def test_assumptions_are_one_line_each_with_their_flags(self):
+        g, claims = trade_off_graph(bonus_confidence=0.2)
+        comparison = build_comparison(g, claims, ANCHOR, runs=30)
+        register = build_register(g, claims, ANCHOR, comparison, [_theory(["vendor"], stale=True)],
+                                  {"e-vendor": [_doc()]})
+        lines, _ = build_assumptions(register, limit=5)
+        vendor = next(line for line in lines if line.text == "vendor")
+        assert vendor.belief == "60%"
+        assert "cited by an out-of-date theory" in vendor.flags and "reaches Y1" in vendor.flags
+        assert "1 supporting" in vendor.evidence
+
+    def test_scenarios_list_what_each_case_changed(self):
+        g, claims = trade_off_graph(bonus_confidence=0.2)
+        base = build_comparison(g, claims, ANCHOR, runs=20)
+        view = view_scenarios(build_scenarios(g, claims, ANCHOR, base, {}, runs=10))
+        assert view.cases == ["Base case", "Upside", "Downside"]
+        assert all(cell.endswith("/ 100") for _, cells in view.rows for cell in cells)
+        assert view.changes[0][1] == "automatic" and "→" in view.changes[0][2][0]
+        assert "not forecasts" in view.caveat
+
+    def test_sub_decisions_and_journal(self):
+        assert build_sub_decisions([{"parent": "O1", "parent_label": "Q3", "label": "Staffing",
+                                     "sentence": "Under O1 Q3 ...", "unavailable": None}]) == [
+            "O1 Q3 → Staffing: Under O1 Q3 ..."]
+        journal = build_journal({"events": [
+            {"at": "2026-09-01T00:00:00+00:00", "title": "Analysis created", "material": True},
+            {"at": "2026-09-02T00:00:00+00:00", "title": "Claim added", "material": False},
+            {"at": "2026-09-03T00:00:00+00:00", "title": "Tripwire happened", "material": True,
+             "belief_change": "conviction 60% → 13%"},
+        ]})
+        assert journal == [("2026-09-03", "Tripwire happened", "conviction 60% → 13%"),
+                           ("2026-09-01", "Analysis created", "")]

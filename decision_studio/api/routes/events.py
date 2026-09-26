@@ -72,7 +72,13 @@ async def create_event(body: EventCreate, session: AsyncSession = Depends(get_se
 @router.get("", response_model=list[EventOut])
 async def list_events(project_id: str | None = None, session: AsyncSession = Depends(get_session)):
     """Timeline events, newest first, optionally for one project."""
-    query = select(EventTimeline).order_by(EventTimeline.event_date.desc())
+    # Journal entries (reasoning/decision_timeline.py) share the table but are
+    # not external events; they are read through /graph/{id}/timeline.
+    query = (
+        select(EventTimeline)
+        .where(EventTimeline.source != "decision_journal")
+        .order_by(EventTimeline.event_date.desc())
+    )
     if project_id:
         query = query.where(EventTimeline.project_id == uuid.UUID(project_id))
     result = await session.execute(query)

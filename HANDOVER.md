@@ -1072,6 +1072,14 @@ None is calibrated. Each is a starting point.
 | `FLIP_EPSILON` | 0.005 | option_sensitivity | A gap this close to zero counts as closed |
 | `MIN_REPORTED_IMPACT` | 0.005 | option_comparison | Drivers moving the gap less (and flipping nothing) are not shown |
 | `FULL_IMPACT_POINTS` | 20 | information_priority | A 20-point gap movement is full impact |
+| `MATERIAL_SHIFT` | 0.05 | assumptions | Gap movement for "could change the comparison" |
+| `ALL_OPTIONS_WEIGHT` | 0.25 | assumptions | Weight of an assumption that moves every option similarly |
+| `RECENT_DOCUMENT_DAYS` / `OLD_DOCUMENT_DAYS` | 365 / 1095 | evidence_quality | Recent / old document |
+| `RECENT_OBSERVATION_DAYS` | 90 | evidence_quality | Recent observation |
+| `DIRECT_RELEVANCE` | 0.7 | evidence_quality | Direct vs indirect document |
+| `MATERIAL_CONVICTION_SHIFT` / `MATERIAL_OUTCOME_SHIFT` | 0.10 / 0.05 | decision_timeline | Material journal events |
+| `AUTO_INPUTS` / `SCENARIO_RUNS` | 5 / 100 | decision_scenarios | Inputs in an automatic case; simulations per case |
+| `MIN_CHOICES` / `MAX_CHOICES` | 2 / 4 | sub_decisions | Choices per sub-decision |
 
 ---
 
