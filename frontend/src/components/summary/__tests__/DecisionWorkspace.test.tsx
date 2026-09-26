@@ -144,6 +144,13 @@ describe('Scenarios', () => {
     expect(screen.getByText(/scenario assumptions, not forecasts/)).toBeInTheDocument()
   })
 
+  it('says when an automatic case changed nothing', () => {
+    const s = scenarios()
+    s.cases[1] = { ...s.cases[1], assumptions: [] }
+    wrap(<ScenariosCard projectId="p1" scenarios={s} />)
+    expect(within(screen.getByTestId('case-upside')).getByTestId('case-source')).toHaveTextContent(/No input changed/)
+  })
+
   it('lets the decider set their own assumptions, and reset them', async () => {
     const save = vi.spyOn(workspace, 'saveScenario').mockResolvedValue(scenarios('user'))
     const reset = vi.spyOn(workspace, 'resetScenario').mockResolvedValue(scenarios())

@@ -176,6 +176,20 @@ describe('Robustness & sensitivity', () => {
     expect(screen.getByText(/not an empirical forecast/)).toBeInTheDocument()
   })
 
+  it('labels a root claim\'s range as a what-if, and explains no drivers without a weighted view', () => {
+    const claimDriver = driver({ kind: 'claim', key: 'c', label: 'Team capacity', flip: 'no_flip' })
+    wrap(<RobustnessCard comparison={comparison({ drivers: [claimDriver] })} />)
+    expect(screen.getByTestId('driver')).toHaveTextContent('60% now · what-if 40%–80%')
+    const unweighted = comparison({ drivers: [], options: comparison().options.map((o) => ({ ...o, weighted: null })) })
+    wrap(<RobustnessCard comparison={unweighted} />)
+    expect(screen.getByTestId('no-drivers')).toHaveTextContent(/no weighted view for the drivers to explain/)
+  })
+
+  it('says a simulation share is not a chance of success', () => {
+    wrap(<RobustnessCard comparison={comparison()} />)
+    expect(screen.getByText(/not the chance that either option succeeds/)).toBeInTheDocument()
+  })
+
   it('has an empty sensitivity state', () => {
     wrap(<RobustnessCard comparison={comparison({ drivers: [] })} />)
     expect(screen.getByTestId('no-drivers')).toBeInTheDocument()

@@ -126,7 +126,9 @@ export default function ScenariosCard({
             <span className="text-text-muted"> — {headline(kase)}</span>
           </p>
           <p className="text-[10px] text-text-muted" data-testid="case-source">
-            {kase.source === 'user' ? t.workspace.userDefined : t.workspace.automatic}
+            {kase.source === 'user'
+              ? t.workspace.userDefined
+              : kase.assumptions.length > 0 ? t.workspace.automatic : t.workspace.noAutomatic}
           </p>
           {editing === kase.key ? (
             <div className="space-y-1">

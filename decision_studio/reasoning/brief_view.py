@@ -180,9 +180,11 @@ class Robustness:
     method: str = (
         "Robust: the higher option is higher in at least 80% of simulations with link "
         "strengths varied; sensitive: 60–80%; unresolved: below 60%; differences under "
-        "2 points count as none. Inputs that could flip the result were found by moving "
-        "each link strength and root claim across its plausible range, one at a time. "
-        "Sensitivity to the model's uncertainty, not an empirical forecast."
+        "2 points count as none. \"Higher in X% of simulations\" is how often one option "
+        "stayed above the other, not the chance that either succeeds. Inputs that could "
+        "flip the result were found by moving each link strength across its plausible "
+        "range and each root claim by ±20 points (a what-if), one at a time, for the two "
+        "leading options. Sensitivity to the model's uncertainty, not an empirical forecast."
     )
 
 
@@ -296,7 +298,8 @@ def build_assumptions(register: dict[str, Any] | None, limit: int = 5) -> tuple[
         lines.append(AssumptionLine(row["text"], pct(row.get("belief")), flags, evidence))
     note = None
     if register.get("influence_basis") == "relevance":
-        note = "No option comparison could be made, so influence is the model's relevance score."
+        note = ("No weighted comparison is available (fewer than two options, or every criterion "
+                "set to \"not a factor\"), so influence is the model's relevance score.")
     elif register.get("total", 0) > len(lines):
         note = f"{register['total'] - len(lines)} further assumption(s) in the map, with less at stake."
     return lines, note
@@ -334,7 +337,9 @@ def build_scenarios(data: dict[str, Any] | None) -> ScenarioView | None:
         rows.append((f"{option['key']} {option['label']}", cells))
     changes = [
         (case["label"], "the decider's" if case["source"] == "user" else "automatic",
-         [f"{a['label']}: {pct(a['base'])} → {pct(a['value'])}" for a in case["assumptions"]])
+         [f"{a['label']}: {pct(a['base'])} → {pct(a['value'])}" for a in case["assumptions"]]
+         or ["no input changed — automatic cases need a weighted view and at least one "
+             "uncertain input that moves it"])
         for case in cases[1:]
     ]
     return ScenarioView(

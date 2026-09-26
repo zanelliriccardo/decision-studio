@@ -278,7 +278,11 @@ def build_comparison(
     # equal-weight ranking compare_options falls back to would be a hidden score.
 
     comparison.robustness = _robustness(comparison, forecasts, outcome_nodes)
-    if explain:
+    # Drivers explain the gap on the weighted view. With every criterion set to
+    # "not a factor" there is no weighted view, and ranking drivers on an
+    # equal-weight gap instead would be a hidden weighting presented as the
+    # decider's: leave them (and what builds on them) empty.
+    if explain and weights_by_key:
         _explain_drivers(comparison, graph, graphs, outcome_nodes, weights_by_key, claims)
     return comparison
 
@@ -367,10 +371,7 @@ def _explain_drivers(
     comparison.headline_pair = (a, b)
     fixed = {cid for row in comparison.options for cid, _ in row.levers_on + row.levers_off}
     base, drivers = perturbation_drivers(graphs, list(outcome_nodes.values()), fixed_nodes=fixed)
-    weights_by_node = (
-        {outcome_nodes[k]: w for k, w in weights_by_key.items()}
-        or {n: 1.0 for n in outcome_nodes.values()}
-    )
+    weights_by_node = {outcome_nodes[k]: w for k, w in weights_by_key.items()}
     comparison.driver_impacts = rank_drivers(base, drivers, a, b, weights_by_node)
 
     text = {str(c.id): c.text for c in claims}
@@ -412,9 +413,12 @@ def describe_driver(
         label = text.get(driver.key, "?")
         what = "Likelihood this holds"
         edge_id = None
+    # A link's range comes from its own simulated uncertainty; a root claim's is a
+    # fixed what-if (the simulations do not vary priors), and is named as such.
+    range_name = "plausible range" if driver.kind == "link" else "what-if range (±20 points)"
     flips = [node_to_key.get(n, n) for n, status in impact.outcome_flips.items() if status == FLIPS]
     explanation = (
-        f"{what}: {_pct(driver.current)} now, plausible range {_pct(driver.low)}–{_pct(driver.high)}. "
+        f"{what}: {_pct(driver.current)} now, {range_name} {_pct(driver.low)}–{_pct(driver.high)}. "
         f"At the low end, {_gap_phrase(impact.low_gap, a, b, labels)} on the weighted view; "
         f"at the high end, {_gap_phrase(impact.high_gap, a, b, labels)}."
     )

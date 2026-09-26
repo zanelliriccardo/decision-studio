@@ -360,7 +360,9 @@ export default function DecisionSummary() {
       {projectId && ranked.length > 0 && (
         <MindChangersCard projectId={projectId} refreshKey={theories} />
       )}
-      {projectId && comparison && !comparison.unavailable && (
+      {/* Information priority ranks inputs by their effect on the weighted
+          gap: without a weighted view there is nothing to rank against. */}
+      {projectId && comparison && !comparison.unavailable && comparison.options.some((o) => o.weighted) && (
         <InformationPriorityCard items={comparison.informationPriority} />
       )}
 

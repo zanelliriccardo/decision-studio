@@ -45,7 +45,11 @@ Each step doubles. Weights are normalised to sum to 1 over the criteria.
 **Weighted view** of option *o*: `Σ_i w_i · P(Y_i | do(o))`. Each term is shown
 as that criterion's contribution. Displayed as points out of 100 — not a
 probability. The Monte Carlo's overall score and the robustness of the weighted
-view use the same weights.
+view use the same weights. When every criterion is "not a factor" there is no
+weighted view: no leader is named, and drivers, information priority and
+automatic scenarios are left empty rather than computed on a hidden equal
+weighting. (`compare_options` still falls back to equal weights internally for
+its per-option `p_best` field, which no screen or report shows.)
 
 **Storage.** `project.outcome_priorities` (migration 025), apart from
 `decision_anchor`: changing a priority never touches the graph and never
@@ -123,8 +127,11 @@ happen, not tested, held, refuted, inconclusive, not run, and so on.
 * **relevance**: 1 if it can reverse the comparison, 0.75 if it can close the
   gap, 0.5 otherwise.
 
-Inputs moving the gap by under half a point (and flipping nothing) are not
-listed. When an open link test exists on the link, it becomes the action (with
+Inputs moving the weighted gap by under half a point are not listed, unless
+they can reverse the comparison on the weighted view or on any single success
+criterion (`option_comparison.is_reportable`; the same rule decides which
+drivers are shown). Information priority, like the drivers, concerns only the
+two leading options on the weighted view; robustness covers every pair. When an open link test exists on the link, it becomes the action (with
 its cheapest test). This is a heuristic priority, not an expected value of
 information and not a money amount.
 
@@ -137,17 +144,10 @@ points). Then, flowing onto page two: **How robust is the comparison?** (what is
 robust, what is uncertain, what could flip it), **What would change my mind**,
 and **Information that could reduce decision uncertainty**.
 
-## V1 simplifications
+## V1 limitations
 
-* Sensitivity is one-at-a-time: interactions between inputs are ignored, and it
-  explains only the gap between the two leading options (all pairs get
-  robustness).
-* Root claim priors are perturbed by a fixed ±20 points; the Monte Carlo varies
-  only link strengths, so claim drivers are what-ifs.
-* The importance mapping and every threshold above are conventions, not
-  calibrated values.
-* Theories bound to no option do not appear in "what would change my mind".
-* Field tests carry no decisiveness yet; their default ratios apply.
+The canonical list is in `HANDOVER.md`, "Decision view: intentional V1
+limitations". It is kept in one place so it cannot drift from the code.
 
 ---
 
@@ -201,8 +201,10 @@ conviction it moved, before → after), comparable cases. Option-comparison and
 priority changes had no history, so they are journalled in the existing
 `event_timeline` table (`source = "decision_journal"`): a comparison entry is
 written when the comparison is *viewed* and an option-implied outcome has moved
-5 points or more, or the weighted verdict changed, since the last entry — its
-date is when the change was first seen, and it says so. Material events (default
+5 points or more, or the weighted verdict changed, since the last entry. It is
+written when the summary loads the comparison or priorities are saved (not when
+the report is exported), so its date is when the change was next *viewed*, and
+the entry says earlier states were not kept. Material events (default
 view): conviction moved ≥ 10 points, a fired falsifier, a refuted link, a
 comparison, priority, scenario or sub-decision change, new or dropped theories.
 
@@ -233,16 +235,7 @@ compared with the existing Monte Carlo under the decider's priorities, with the
 same robustness vocabulary. The main comparison is unchanged: it evaluates each
 option with its sub-choices as the map has them.
 
-## V1 simplifications (part 2)
+## V1 limitations (part 2)
 
-* Assumptions are claims, not links; a link's uncertainty shows through the
-  claims at either end.
-* Document age comes from `published_date`; evidence rows have no retrieval
-  date, so undated documents stay "undated".
-* The journal cannot reconstruct comparison history before this feature: the
-  first comparison entry is dated when it was first viewed.
-* Only three scenarios (base, upside, downside). Automatic cases use
-  one-at-a-time plausible ranges, so combined extremes can be more severe than
-  any single one suggests.
-* Sub-decisions are one level deep; choices are evaluated one sub-decision at a
-  time (no combinations across sub-decisions).
+The canonical list is in `HANDOVER.md`, "Decision view: intentional V1
+limitations". It is kept in one place so it cannot drift from the code.

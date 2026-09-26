@@ -267,9 +267,10 @@ finding: prefer the option robust to both. Supported outcome, not failure.
 
 `graph/stability.py` — 200 runs, per-edge σ = 0.12 scaled by `link_confidence`.
 
-`rank_stability()` reports `p_first` per option and a `decisive` flag: *"A wins
-in 52% of simulations"* rather than *"A wins"*. **The system contradicting its
-own output is the point.**
+`compare_options()` reports, per option, how often it came out higher than each
+other option on every success criterion and on the weighted view: *"higher in
+52% of simulations"* rather than *"A wins"*. **The system contradicting its own
+output is the point.** (It generalises the former `rank_stability`.)
 
 Comparisons use **selective common random numbers**: shared noise where the
 scenarios share edges, independent where they differ. Fully shared understates
@@ -875,6 +876,52 @@ now receive the same context as the rest of the graph (anchor, then intake).
 
 ## 6. Known open issues
 
+### Decision view: intentional V1 limitations (canonical)
+
+Reviewed against the code; each is deliberate, consistent and disclosed where
+it is shown. See docs/DECISION_VIEW.md for the methods.
+
+1. **Weights are conventions.** Importance 8/4/2/1/0, robustness 80%/60%/2
+   points, impact and information bands, likelihood ratios by decisiveness — all
+   listed in §10, none calibrated, none presented as statistically derived.
+2. **Sensitivity is one input at a time.** No interaction effects; it explains
+   the gap between the two leading options on the weighted view only.
+   Robustness covers every pair on screen; the report shows robustness for the
+   leading pair only, to stay short.
+3. **Information priority concerns the leading pair.** Same drivers, same pair;
+   robustness still evaluates all pairs.
+4. **Root claims are what-ifs.** Their prior is moved a fixed ±20 points; the
+   Monte Carlo varies link strengths only, not priors. Labelled "what-if" in the
+   driver list and the method notes.
+5. **Robustness can reach 100%.** Options share most links and shared links
+   share their random draws, so common uncertainty cancels in the comparison.
+   "Higher in X% of simulations" is how often the ranking held, not a chance of
+   success; the screen and the report say so.
+6. **Mind-changers cover option-bound theories only.** Theories with no option,
+   or with an option but no clear predicted effect (achieves / threatens), are
+   not shown in "What would change my mind?": they bear on every option alike
+   or cannot be read for or against one.
+7. **Field tests take no decisiveness.** Their default ratios apply (equal to a
+   moderate link test).
+8. **Assumptions are existing claims.** No separate entity; a link's
+   uncertainty reaches the register through the claims at either end.
+9. **Document age is the publication date.** Evidence rows have no retrieval
+   date; documents without a publication date stay "undated".
+10. **The journal records what it saw.** Comparison states are journalled when
+    viewed; earlier states cannot be reconstructed and the entries say so.
+11. **Three scenarios.** Base, upside, downside. Automatic cases pick inputs by
+    one-at-a-time ranges and apply them together; each case is computed on a
+    copy of the graph, never stored as one.
+12. **Sub-decisions are one level deep.** Each is evaluated alone, with other
+    sub-decisions' claims as the map has them; no combinations across
+    sub-decisions.
+13. **No weighted view, no drivers.** With every criterion "not a factor", no
+    leader, drivers, information priority or automatic scenario is produced, and
+    the assumption register ranks by the model's relevance score (it says so).
+14. **Demo effects are small.** On the demo project drivers move the gap by 1–3
+    points and nothing flips the comparison; that is the finding, not a defect.
+
+
 Things I would look at, in order.
 
 **Claim volume.** Twelve documents produced 476 claims after dedup removed 710,
@@ -1080,6 +1127,15 @@ None is calibrated. Each is a starting point.
 | `MATERIAL_CONVICTION_SHIFT` / `MATERIAL_OUTCOME_SHIFT` | 0.10 / 0.05 | decision_timeline | Material journal events |
 | `AUTO_INPUTS` / `SCENARIO_RUNS` | 5 / 100 | decision_scenarios | Inputs in an automatic case; simulations per case |
 | `MIN_CHOICES` / `MAX_CHOICES` | 2 / 4 | sub_decisions | Choices per sub-decision |
+| `DECISIVE_SHARE` | 0.60 | stability | A leader best in fewer runs is not named |
+| Info-priority impact bands | high ≥ 10 pts, medium ≥ 3 pts (`HIGH`/`MEDIUM` = 0.50/0.15 of 20) | information_priority | Absolute gap movement |
+| Uncertainty bands | high ≥ 0.66, medium ≥ 0.33 | information_priority | `link_uncertainty` or `4p(1−p)` |
+| `RELEVANCE` | 1 / 0.75 / 0.5 | information_priority, assumptions | Can reverse / can close the gap / neither |
+| Tripwire LR by decisiveness | fired: ×2 / ×4 / ×10 for a confirmer, ÷ the same for a falsifier; not fired: ×1.2 / ×1.5 / ×1.5 for a falsifier, ÷ the same for a confirmer | theory_value | weak / moderate / decisive; moderate = the former fixed value |
+| Link-test LR by decisiveness | held 1.5 / 2 / 3, refuted 0.5 / 0.25 / 0.1, inconclusive 1 | link_tests | weak / moderate / decisive |
+| `DEFAULT_FIELD_LR` | supports 2, refutes 0.25, inconclusive 1 | experiments | Field tests take no decisiveness (see limitations) |
+| `MIN_OPEN_QUESTION` / off-target factor | 0.25 / 0.5 | mind_changers | Ranking of mind-changing signals |
+| `MAX_DRIVERS` / `MAX_ASSUMPTIONS` / info items | 5 / 8 / 5 | option_comparison, assumptions, information_priority | Shown per view |
 
 ---
 

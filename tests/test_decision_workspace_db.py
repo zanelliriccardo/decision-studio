@@ -69,7 +69,7 @@ async def test_the_journal_records_what_changed_belief(session):
         EventTimeline.project_id == project.id, EventTimeline.event_type == "comparison"))).scalars().all()
     comparisons = [e for e in timeline.events if e["kind"] == "comparison"]
     assert len(journal) == len(comparisons) >= 1
-    assert all("first seen" in e["detail"] for e in comparisons)
+    assert all("earlier states were not kept" in e["detail"] for e in comparisons)
     assert [e["at"] for e in timeline.events] == sorted(e["at"] for e in timeline.events)
 
 

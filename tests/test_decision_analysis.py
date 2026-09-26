@@ -220,6 +220,12 @@ class TestComparisonCarriesWeightsAndPairs:
         result = build_comparison(g, claims, ANCHOR, runs=30, priorities={"Y1": "none", "Y2": "none"})
         assert result.leader is None and not result.decisive
         assert all(o.weighted is None for o in result.options)
+        # Review fix: no weighted view means nothing to explain. Drivers used to
+        # be ranked on a hidden equal-weight gap and described as "the weighted
+        # view", and information priority, automatic scenarios and the
+        # assumption register built on them.
+        assert result.drivers == [] and result.driver_impacts == []
+        assert result.headline_pair is None
 
 
 # ── Driver sensitivity ──────────────────────────────────────────────────────

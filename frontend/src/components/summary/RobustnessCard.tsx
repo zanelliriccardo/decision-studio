@@ -81,7 +81,9 @@ export default function RobustnessCard({ comparison }: { comparison: OptionCompa
           {t.decisionView.sensitivityLabel}
         </h3>
         {comparison.drivers.length === 0 ? (
-          <p className="text-[11px] text-text-muted" data-testid="no-drivers">{t.decisionView.noDrivers}</p>
+          <p className="text-[11px] text-text-muted" data-testid="no-drivers">
+            {comparison.options.some((o) => o.weighted) ? t.decisionView.noDrivers : t.decisionView.noDriversNoWeights}
+          </p>
         ) : (
           <>
             {a && b && (
@@ -103,7 +105,7 @@ export default function RobustnessCard({ comparison }: { comparison: OptionCompa
                     </span>
                   )}
                   <span className="block pl-4 text-[10px] text-text-muted">
-                    {t.decisionView.driverRange
+                    {(driver.kind === 'claim' ? t.decisionView.driverRangeWhatIf : t.decisionView.driverRange)
                       .replace('{current}', pct(driver.current))
                       .replace('{low}', pct(driver.low))
                       .replace('{high}', pct(driver.high))}

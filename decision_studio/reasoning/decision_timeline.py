@@ -141,7 +141,7 @@ async def record_comparison_if_changed(session: AsyncSession, project_id: UUID, 
     if not changes:
         return False
     await record(session, project_id, "comparison",
-                 "Option comparison changed" if last else "Options first compared",
+                 "Option comparison changed" if last else "Comparison first recorded",
                  "; ".join(changes), {"fingerprint": fingerprint})
     return True
 
@@ -320,7 +320,8 @@ async def decision_timeline(session: AsyncSession, project_id: UUID) -> dict[str
         select(EventTimeline).where(EventTimeline.project_id == project_id,
                                     EventTimeline.source == JOURNAL_SOURCE)
     )).scalars():
-        seen = " (first seen when the comparison was viewed)" if row.event_type == "comparison" else ""
+        seen = (" (recorded when the comparison was next viewed; earlier states were not kept)"
+                if row.event_type == "comparison" else "")
         events.append(_event(row.event_date, row.event_type, row.title,
                              detail=(row.description or "") + seen or None, material=True))
 

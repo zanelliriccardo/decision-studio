@@ -308,3 +308,30 @@ class TestReportSections:
         ]})
         assert journal == [("2026-09-03", "Tripwire happened", "conviction 60% → 13%"),
                            ("2026-09-01", "Analysis created", "")]
+
+
+def test_a_choice_wins_over_the_parent_options_switched_off_levers():
+    """Review fix: a choice whose claim is another option's lever was switched off
+    again by the parent's intervention, so the choice changed nothing."""
+    g, claims = trade_off_graph()
+    # "slack" is a lever of O2; under O1 it is switched off. A Q3 sub-decision
+    # whose choice is "add slack after all" must switch it back on.
+    (sd,) = normalise([{
+        "parent": "O1", "label": "Schedule",
+        "choices": [{"label": "Add slack", "claim_ids": ["slack"]},
+                    {"label": "Keep morale", "claim_ids": ["morale"]}],
+    }], OPTIONS, USABLE, strict=True)
+    (result,) = evaluate(g, claims, ANCHOR, [sd], runs=10)
+    add_slack = result["choices"][0]
+    # Y1 = 1 - (1 - 0.8 slack)(1 - 0.6 x 0.5 vendor) = 0.86, not the 0.30 of slack off.
+    assert add_slack["outcomes"]["Y1"]["point"] == pytest.approx(0.86)
+
+
+def test_claim_drivers_are_labelled_what_if():
+    g, claims = trade_off_graph()
+    comparison = build_comparison(g, claims, ANCHOR, runs=10)
+    kinds = {d["kind"]: d["explanation"] for d in comparison.drivers}
+    if "claim" in kinds:
+        assert "what-if range (±20 points)" in kinds["claim"]
+    if "link" in kinds:
+        assert "plausible range" in kinds["link"]

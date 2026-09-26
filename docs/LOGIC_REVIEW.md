@@ -173,6 +173,27 @@ frontend `components/summary/__tests__/DecisionWorkspace.test.tsx`. Migration
 decider's upside/downside assumptions (`decision_case`); the existing
 `event_timeline` table stores journal entries for changes nothing else records.
 
+## Part 5: limitations review
+
+Each documented correction and V1 limitation was checked against the code.
+Two were hiding bugs, both fixed with regression tests that fail on the old
+code:
+
+* **Hidden equal weighting (drivers).** With every criterion "not a factor",
+  the drivers were ranked on an equal-weight gap and described as "the weighted
+  view"; information priority, automatic scenarios and the assumption register
+  built on them. Now nothing is explained when there is no weighted view
+  (`option_comparison.build_comparison`).
+* **Sub-decision choice cancelled by the parent option.** A choice whose claim
+  is another option's lever was switched on and then off again by the parent's
+  intervention, so the choice changed nothing (`sub_decisions.evaluate`).
+
+Wording corrected: root-claim ranges are "what-if"; "higher in X% of
+simulations" is said not to be a chance of success; the journal says earlier
+comparison states were not kept; an automatic scenario with no inputs says so;
+the information-priority cutoff states its exceptions. The canonical
+limitations list is in `HANDOVER.md` §6.
+
 ## Report for managers and executives
 
 The brief (Markdown, HTML, PDF) was re-ordered to be read answer-first

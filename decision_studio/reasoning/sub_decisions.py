@@ -144,7 +144,13 @@ def evaluate(
         for choice in sd["choices"]:
             mine = set(choice["claim_ids"])
             others = {c for other in sd["choices"] if other is not choice for c in other["claim_ids"]} - mine
-            graphs[choice["key"]] = intervene(graph, on + sorted(mine), off + sorted(others))
+            # The choice's own claims win over the parent's switched-off levers
+            # (intervene applies "off" after "on", so a claim in both would be
+            # silently switched off and the choice would change nothing).
+            graphs[choice["key"]] = intervene(
+                graph, [c for c in on if c not in others] + sorted(mine),
+                [c for c in off if c not in mine] + sorted(others),
+            )
         forecasts, _ = compare_options(graphs, list(outcome_nodes.values()), runs=runs,
                                        weights=weights_by_node or None)
         node_to_key = {n: k for k, n in outcome_nodes.items()}
