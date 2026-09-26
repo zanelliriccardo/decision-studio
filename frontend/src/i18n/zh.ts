@@ -852,7 +852,7 @@ export const zh: Translations = {
     theDecision: '这个决策',
     decisionNotStated: '本次分析未说明所要决策的内容',
     noObjectiveWarning: '未说明决策内容时，分析只是在描述现状，而非针对某个选择。请在项目中设定后重新生成。',
-    intro: '基于已审阅的图谱生成了 {n} 个解释，按计入反对意见后的稳固程度排序。',
+    intro: '基于已审阅的图谱生成了 {n} 个解释。因果链到达成功标准的排在前面，其次按你已说明的信念排序，未说明时按计入反对意见后的稳固程度排序。',
     howItWorks: '作用机制',
     recommendation: '这意味着什么',
     againstIt: '有哪些反对理由',

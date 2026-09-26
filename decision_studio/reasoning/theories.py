@@ -102,16 +102,27 @@ async def list_current_theories(
         .options(*_theory_loader_options())
     )
     theories = list(result.scalars().all())
-    impact_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    # Ordered by adjusted_score, not raw confidence: an adversarial objection
-    # that changes no ranking is decoration. Raw confidence stays visible.
-    theories.sort(
-        key=lambda t: (
-            impact_rank.get(t.business_impact, 4),
-            -(t.adjusted_score if t.adjusted_score is not None else (t.confidence or 0.0)),
-        )
-    )
+    theories.sort(key=lambda t: rank_key(t, None))
     return theories
+
+
+def rank_key(theory: Theory, conviction: float | None) -> tuple:
+    """Order theories by what the analysis measured, strongest first.
+
+    1. Whether the causal chain verifiably reaches a success criterion
+       (computed from the graph): a theory that never reaches the decision is
+       context, however well argued.
+    2. Up to date before out of date.
+    3. Support: the decider's conviction once stated (the only number moved by
+       observations), otherwise the objection-discounted score.
+
+    The model's own ``business_impact`` label is deliberately not a key: it was
+    the model grading its own theory, and it used to outrank everything.
+    """
+    support = conviction
+    if support is None:
+        support = theory.adjusted_score if theory.adjusted_score is not None else (theory.confidence or 0.0)
+    return (not bool(getattr(theory, "reaches_outcome", False)), bool(theory.is_stale), -support)
 
 
 async def get_theory(

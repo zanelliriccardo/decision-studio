@@ -85,11 +85,10 @@ export default function DecisionSummary() {
     }
   }, [projectId, t])
 
-  // Ordered by the score that already discounts objections, so a theory nobody
-  // has managed to attack outranks a confident one that has been.
-  const ranked = [...(theories ?? [])].sort(
-    (a, b) => (b.adjustedScore ?? b.confidence) - (a.adjustedScore ?? a.confidence),
-  )
+  // The server's order (theories.rank_key): reaching a success criterion
+  // first, then the decider's conviction, else the objection-discounted score.
+  // Re-sorting here used to disagree with the graph panel and the report.
+  const ranked = theories ?? []
 
   const claimText = (id: string) => claims.find((c) => c.id === id)?.text ?? ''
 

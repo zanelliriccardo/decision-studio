@@ -163,3 +163,32 @@ class TestOptionComparison:
         assert q4.status == "no_path" and q4.reaches_outcome is False
         assert q3.status == "no_path"  # it only switches slack off, which leads nowhere
         assert q3.p_best == pytest.approx(0.5)  # indistinguishable: a tie
+
+
+# --- Theories ranked by what was measured, not the model's impact label ---
+
+from decision_studio.reasoning.theories import rank_key  # noqa: E402
+
+
+def _ranked_theory(title, *, impact="low", reaches=True, stale=False, score=0.5):
+    return SimpleNamespace(title=title, business_impact=impact, reaches_outcome=reaches,
+                           is_stale=stale, adjusted_score=score, confidence=score)
+
+
+def test_ranking_ignores_the_models_impact_label():
+    critical_but_off_target = _ranked_theory("a", impact="critical", reaches=False, score=0.9)
+    low_but_on_target = _ranked_theory("b", impact="low", score=0.4)
+    stale = _ranked_theory("c", stale=True, score=0.9)
+    order = sorted([critical_but_off_target, stale, low_but_on_target],
+                   key=lambda t: rank_key(t, None))
+    assert [t.title for t in order] == ["b", "c", "a"]
+
+
+def test_a_stated_conviction_replaces_the_model_score():
+    confident = _ranked_theory("model says 90%", score=0.9)
+    believed = _ranked_theory("decider says 95%", score=0.3)
+    doubted = _ranked_theory("decider says 5%", score=0.95)
+    convictions = {"decider says 95%": 0.95, "decider says 5%": 0.05}
+    order = sorted([confident, believed, doubted],
+                   key=lambda t: rank_key(t, convictions.get(t.title)))
+    assert [t.title for t in order] == ["decider says 95%", "model says 90%", "decider says 5%"]

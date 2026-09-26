@@ -179,20 +179,25 @@ def build_forecast(data: dict[str, Any] | None) -> Forecast | None:
 
 
 def _rank_key(line: TheoryLine) -> tuple:
-    """Strongest first: the decider's conviction when stated, else the model's
-    objection-discounted score. Conviction leads because it is the only number
-    here that observations have moved."""
-    score = line.theory.adjusted_score
-    if score is None:
-        score = line.theory.confidence or 0.0
-    return (line.conviction is not None, line.conviction or 0.0, score)
+    """Strongest first, as everywhere else (theories.rank_key), reversed for
+    ``sorted(..., reverse=True)``."""
+    from decision_studio.reasoning.theories import rank_key
+
+    reaches, stale, neg_support = rank_key(line.theory, line.conviction)
+    return (not reaches, not stale, -neg_support)
 
 
 def build_view(data: dict[str, Any]) -> BriefView:
     """Derive the brief from the data gathered in ``brief._gather``."""
     anchor = data.get("anchor") or {}
     convictions = data.get("convictions", {})
-    theories = data["theories"]
+    from decision_studio.reasoning.theories import rank_key
+
+    def _conviction_of(theory: Any) -> float | None:
+        held = convictions.get(str(theory.theory_key))
+        return held.current if held else None
+
+    theories = sorted(data["theories"], key=lambda t: rank_key(t, _conviction_of(t)))
 
     lines: list[TheoryLine] = []
     for index, theory in enumerate(theories, start=1):

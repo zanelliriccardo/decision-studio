@@ -186,6 +186,7 @@ export async function inferLinks(
 }
 
 /** Rebuild the DAG and re-propagate. Pure computation — no LLM. */
+// DEAD-CODE-CANDIDATE DC-23: no callers since the authoring hooks stopped calling it (graph reads already propagate). See docs/DEAD_CODE_REPORT.md
 export async function recompute(projectId: string): Promise<void> {
   await apiPost(`${base(projectId)}/recompute`, {})
 }

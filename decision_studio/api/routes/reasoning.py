@@ -582,6 +582,9 @@ async def _generate(
     conviction_map = await theory_value.convictions(
         session, project_id, [t.theory_key for t in result.theories]
     )
+    ordered = sorted(result.theories, key=lambda t: theory_service.rank_key(
+        t, getattr(conviction_map.get(str(t.theory_key)), "current", None)
+    ))
     return TheoryGenerationResponse(
         graph_revision=result.revision.graph_revision,
         theory_revision=result.revision.revision,
@@ -592,7 +595,7 @@ async def _generate(
                 tripwire_map.get(t.id, []),
                 conviction_map.get(str(t.theory_key)),
             )
-            for t in result.theories
+            for t in ordered
         ],
         change_summary=ChangeSummary(**result.change_summary),
         validation=result.validation,
@@ -632,7 +635,7 @@ async def list_theories(
     project_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> TheoryListResponse:
-    """Current theories, ordered by business impact then confidence."""
+    """Current theories, strongest first (see theories.rank_key)."""
     project = await _require_project(project_id, session)
     theories = await theory_service.list_current_theories(session, project_id)
     objection_map = await _objections_by_theory(session, project_id)
@@ -640,6 +643,9 @@ async def list_theories(
     conviction_map = await theory_value.convictions(
         session, project_id, [t.theory_key for t in theories]
     )
+    theories.sort(key=lambda t: theory_service.rank_key(
+        t, getattr(conviction_map.get(str(t.theory_key)), "current", None)
+    ))
     return TheoryListResponse(
         theories=[
             _theory_response(

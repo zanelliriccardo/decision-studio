@@ -850,7 +850,7 @@ Supply side changes: Stack Overflow traffic down 55% YoY, junior developer hirin
     theDecision: 'The decision',
     decisionNotStated: 'No decision was stated for this analysis',
     noObjectiveWarning: 'Without a stated decision the analysis describes the situation rather than bearing on a choice. Set one on the project and regenerate.',
-    intro: '{n} explanation(s) were generated from the reviewed graph, ordered by how well each holds up once objections are counted against it.',
+    intro: '{n} explanation(s) were generated from the reviewed graph. Those whose causal chain reaches a success criterion come first, then by your conviction where you have stated one, otherwise by how well each holds up once objections are counted against it.',
     howItWorks: 'How it works',
     recommendation: 'What this implies',
     againstIt: 'What argues against it',

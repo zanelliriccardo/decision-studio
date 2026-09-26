@@ -159,7 +159,21 @@ describe('Theory panel: tripwires', () => {
     await userEvent.click(screen.getByRole('button', { name: /details/i }))
     await userEvent.click(screen.getByRole('button', { name: /it happened/i }))
 
-    expect(onObserveTripwire).toHaveBeenCalledWith('tw-1', true)
+    // No event named: an empty label, which the API client drops.
+    expect(onObserveTripwire).toHaveBeenCalledWith('tw-1', true, '')
+  })
+
+  it('passes the named event, so one fact is not counted twice', async () => {
+    const onObserveTripwire = vi.fn()
+    renderTheories({
+      theories: [makeTheory({ tripwires: [tripwire()] })],
+      onObserveTripwire,
+    })
+    await userEvent.click(screen.getByRole('button', { name: /details/i }))
+    await userEvent.type(screen.getByTestId('observation-event'), 'Vendor missed 1 August')
+    await userEvent.click(screen.getByRole('button', { name: /it happened/i }))
+
+    expect(onObserveTripwire).toHaveBeenCalledWith('tw-1', true, 'Vendor missed 1 August')
   })
 
   it('shows an already-observed tripwire without action buttons', async () => {
