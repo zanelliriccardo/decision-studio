@@ -51,6 +51,7 @@ function tripwire(overrides: Partial<Tripwire> = {}): Tripwire {
   return {
     id: 'tw-1',
     observable: 'Vendor confirms the integration date in writing',
+    decisiveness: 'moderate',
     direction: 'falsifies',
     horizonDays: 30,
     checkBy: '2026-08-25T00:00:00Z',
@@ -174,6 +175,20 @@ describe('Theory panel: tripwires', () => {
     await userEvent.click(screen.getByRole('button', { name: /it happened/i }))
 
     expect(onObserveTripwire).toHaveBeenCalledWith('tw-1', true, 'Vendor missed 1 August')
+  })
+
+  it('asks how decisive a pending tripwire is, and locks it once observed', async () => {
+    const onSetTripwireDecisiveness = vi.fn()
+    renderTheories({
+      theories: [makeTheory({ tripwires: [tripwire(), tripwire({ id: 'tw-2', status: 'observed' })] })],
+      onObserveTripwire: vi.fn(),
+      onSetTripwireDecisiveness,
+    })
+    await userEvent.click(screen.getByRole('button', { name: /details/i }))
+    await userEvent.click(screen.getByRole('button', { name: 'decisively' }))
+    expect(onSetTripwireDecisiveness).toHaveBeenCalledWith('tw-1', 'decisive')
+    // The observed one shows its weight but offers no buttons.
+    expect(screen.getAllByRole('button', { name: 'decisively' })).toHaveLength(1)
   })
 
   it('shows an already-observed tripwire without action buttons', async () => {

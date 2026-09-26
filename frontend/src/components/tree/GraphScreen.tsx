@@ -1198,6 +1198,7 @@ export default function GraphScreen() {
                 onGenerateTripwires={() => void runTheoryAction(() => reasoningApi.generateTripwires(projectId!))}
                 onDismissObjection={(id) => void runTheoryAction(() => reasoningApi.dismissObjection(projectId!, id))}
                 onObserveTripwire={(id, observed, event) => void runTheoryAction(() => reasoningApi.observeTripwire(projectId!, id, observed, undefined, event))}
+                onSetTripwireDecisiveness={(id, level) => void runTheoryAction(() => reasoningApi.setTripwireDecisiveness(projectId!, id, level))}
                 onClose={handleClosePanel}
               />
             )}

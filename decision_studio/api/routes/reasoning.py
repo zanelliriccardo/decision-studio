@@ -41,6 +41,7 @@ from decision_studio.api.models.reasoning import (
     ExperimentListResponse,
     ExperimentResponse_,
     InferLinksResponse,
+    DecisivenessRequest,
     OutsideViewRequest,
     OutsideViewResponse,
     PersonaResponse,
@@ -267,6 +268,7 @@ async def _tripwires_by_theory(
                 status=row.status,
                 observed_at=row.observed_at,
                 observed_note=row.observed_note,
+                decisiveness=row.decisiveness or "moderate",
             )
         )
     return mapping
@@ -826,6 +828,35 @@ async def observe_tripwire(
         status=row.status,
         observed_at=row.observed_at,
         observed_note=row.observed_note,
+        decisiveness=row.decisiveness or "moderate",
+    )
+
+
+@router.patch(
+    "/graph/{project_id}/tripwires/{tripwire_id}/decisiveness",
+    response_model=TripwireResponse,
+)
+async def set_tripwire_decisiveness(
+    project_id: UUID,
+    tripwire_id: UUID,
+    req: DecisivenessRequest,
+    session: AsyncSession = Depends(get_session),
+) -> TripwireResponse:
+    """How much this tripwire would count. Only while it is still pending."""
+    await _require_project(project_id, session)
+    try:
+        row = await adversary_service.set_tripwire_decisiveness(
+            session, project_id, tripwire_id, req.decisiveness
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return TripwireResponse(
+        id=row.id, observable=row.observable, direction=row.direction,
+        horizon_days=row.horizon_days, check_by=row.check_by, status=row.status,
+        observed_at=row.observed_at, observed_note=row.observed_note,
+        decisiveness=row.decisiveness or "moderate",
     )
 
 
@@ -1309,6 +1340,7 @@ async def promote_discriminator(
             id=t.id, observable=t.observable, direction=t.direction,
             horizon_days=t.horizon_days, check_by=t.check_by, status=t.status,
             observed_at=t.observed_at, observed_note=t.observed_note,
+            decisiveness=t.decisiveness or "moderate",
         )
         for t in tripwires
     ]

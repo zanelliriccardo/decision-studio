@@ -10,7 +10,7 @@
  * ±3%, which is finer than anyone's belief actually is.
  */
 
-import { apiGet, apiPost } from './api/client.ts'
+import { apiGet, apiPatch, apiPost } from './api/client.ts'
 import type { DecisionAnchor } from '../types/graph.ts'
 import type { Theory } from '../types/reasoning.ts'
 
@@ -179,12 +179,14 @@ export interface LinkHypothesis {
   uncertainty: number
   status: 'open' | 'held' | 'refuted' | 'inconclusive'
   observedNote: string | null
+  decisiveness: 'weak' | 'moderate' | 'decisive'
 }
 
 interface ApiHypothesis {
   id: string; theory_key: string; edge_id: string; statement: string; refuted_if: string
   cheapest_test: string; priority: number; leverage: number; uncertainty: number
   status: LinkHypothesis['status']; observed_note: string | null
+  decisiveness?: LinkHypothesis['decisiveness']
 }
 
 const toHypothesis = (api: ApiHypothesis): LinkHypothesis => ({
@@ -192,6 +194,7 @@ const toHypothesis = (api: ApiHypothesis): LinkHypothesis => ({
   refutedIf: api.refuted_if, cheapestTest: api.cheapest_test, priority: api.priority,
   leverage: api.leverage, uncertainty: api.uncertainty, status: api.status,
   observedNote: api.observed_note,
+  decisiveness: api.decisiveness ?? 'moderate',
 })
 
 export async function fetchHypotheses(projectId: string, theoryKey: string): Promise<LinkHypothesis[]> {
@@ -280,4 +283,13 @@ export function independentCount(steps: ConvictionStep[]): { total: number; inde
   const total = steps.length
   const independent = steps.filter((s) => s.duplicateOf === null).length
   return { total, independent }
+}
+
+/** How much an open link test would count, stated before it is run. */
+export async function setHypothesisDecisiveness(
+  projectId: string, hypothesisId: string, decisiveness: LinkHypothesis['decisiveness'],
+): Promise<LinkHypothesis> {
+  return toHypothesis(await apiPatch<ApiHypothesis>(
+    `/api/v1/graph/${projectId}/hypotheses/${hypothesisId}/decisiveness`, { decisiveness },
+  ))
 }

@@ -414,7 +414,7 @@ async def record_observation(
         await record_evidence(
             session, project_id, theory.theory_key,
             likelihood_ratio if likelihood_ratio is not None
-            else tripwire_likelihood(row.direction, observed),
+            else tripwire_likelihood(row.direction, observed, row.decisiveness),
             source="tripwire", source_id=row.id,
             note=f"{'Observed' if observed else 'Not observed'}: {row.observable}",
             event=event,
@@ -430,4 +430,35 @@ async def record_observation(
 
     await session.commit()
     await session.refresh(row)
+    return row
+
+
+async def set_tripwire_decisiveness(
+    session: AsyncSession, project_id: UUID, tripwire_id: UUID, decisiveness: str
+) -> TheoryTripwire:
+    """State how much a tripwire would count, before it is observed.
+
+    Raises:
+        LookupError: unknown tripwire.
+        ValueError: already observed — a weight chosen after seeing the result
+            could be fitted to it, which is exactly what stating it in advance
+            prevents.
+    """
+    from decision_studio.reasoning.theory_value import DECISIVENESS
+
+    if decisiveness not in DECISIVENESS:
+        raise ValueError(f"Decisiveness must be one of {', '.join(DECISIVENESS)}")
+    row = (
+        await session.execute(
+            select(TheoryTripwire)
+            .join(Theory, Theory.id == TheoryTripwire.theory_id)
+            .where(TheoryTripwire.id == tripwire_id, Theory.project_id == project_id)
+        )
+    ).scalars().first()
+    if row is None:
+        raise LookupError(f"Tripwire {tripwire_id} not found in project")
+    if row.status != "pending":
+        raise ValueError("Decisiveness is stated before observing, and this tripwire has been observed")
+    row.decisiveness = decisiveness
+    await session.commit()
     return row

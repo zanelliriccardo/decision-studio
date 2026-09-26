@@ -779,6 +779,9 @@ Supply side changes: Stack Overflow traffic down 55% YoY, junior developer hirin
     eventLabel: 'Event observed (optional)',
     eventPlaceholder: 'e.g. Vendor missed the 1 August API delivery',
     eventHint: 'Name the real-world event this result comes from. Results naming the same event count once against this theory, so one fact is not counted twice.',
+    wouldCount: 'Would count',
+    decisiveness: { weak: 'a little', moderate: 'moderately', decisive: 'decisively' },
+    decisivenessHint: 'Say now, before the result is in, how much it should move your conviction. It is locked once the result is recorded, so the weight cannot be chosen to fit it.',
     waiting: 'waiting for you to state a conviction',
     sources: {
       tripwire: 'Tripwire',

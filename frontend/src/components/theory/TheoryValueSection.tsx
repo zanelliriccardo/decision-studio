@@ -12,6 +12,7 @@ import {
   proposeHypotheses,
   recordFieldResult,
   recordHypothesisResult,
+  setHypothesisDecisiveness,
   statePrior,
   type Conviction,
   type FieldTest,
@@ -21,6 +22,7 @@ import type { DecisionAnchor } from '../../types/graph.ts'
 import type { Theory } from '../../types/reasoning.ts'
 import ConvictionElicitor from './ConvictionElicitor.tsx'
 import EventField from './EventField.tsx'
+import DecisivenessPicker from './DecisivenessPicker.tsx'
 
 const pct = (p: number | null | undefined) => (p == null ? '' : `${Math.round(p * 100)}%`)
 
@@ -265,6 +267,16 @@ export default function TheoryValueSection({
                 {h.cheapestTest && (
                   <p className="text-text-secondary"><span className="text-text-muted">{t.theoryValue.cheapest}: </span>{h.cheapestTest}</p>
                 )}
+                <DecisivenessPicker
+                  value={h.decisiveness}
+                  locked={h.status !== 'open'}
+                  onChange={(level) =>
+                    void run(`${h.id}-weight`, async () => {
+                      const updated = await setHypothesisDecisiveness(projectId, h.id, level)
+                      setHypotheses((prev) => (prev ?? []).map((x) => (x.id === h.id ? updated : x)))
+                    })
+                  }
+                />
                 {h.status === 'open' ? (
                   <div className="flex gap-1.5 pt-0.5">
                     {(['held', 'refuted', 'inconclusive'] as const).map((result) => (

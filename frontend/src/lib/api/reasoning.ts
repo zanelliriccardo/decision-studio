@@ -87,6 +87,7 @@ export function transformTheory(api: ApiTheory): Theory {
       status: tw.status,
       observedAt: tw.observed_at,
       observedNote: tw.observed_note,
+      decisiveness: tw.decisiveness ?? 'moderate',
     })),
   }
 }
@@ -766,4 +767,13 @@ export async function fetchOptionComparison(projectId: string): Promise<OptionCo
       ),
     })),
   }
+}
+
+/** How much a pending tripwire would count, stated before it is observed. */
+export async function setTripwireDecisiveness(
+  projectId: string,
+  tripwireId: string,
+  decisiveness: 'weak' | 'moderate' | 'decisive',
+): Promise<void> {
+  await apiPatch(`${base(projectId)}/tripwires/${tripwireId}/decisiveness`, { decisiveness })
 }

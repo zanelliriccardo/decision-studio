@@ -60,7 +60,11 @@ export interface Tripwire {
   status: 'pending' | 'observed' | 'not_observed' | 'expired'
   observedAt: string | null
   observedNote: string | null
+  /** How much the decider said, before observing, this would count. */
+  decisiveness: Decisiveness
 }
+
+export type Decisiveness = 'weak' | 'moderate' | 'decisive'
 
 /** One question from the framing questionnaire. */
 
@@ -315,6 +319,7 @@ export interface ApiTheory {
     status: 'pending' | 'observed' | 'not_observed' | 'expired'
     observed_at: string | null
     observed_note: string | null
+    decisiveness?: 'weak' | 'moderate' | 'decisive'
   }>
 }
 

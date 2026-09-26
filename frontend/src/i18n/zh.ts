@@ -781,6 +781,9 @@ export const zh: Translations = {
     eventLabel: '观察到的事件（可选）',
     eventPlaceholder: '例如：供应商未在 8 月 1 日交付 API',
     eventHint: '写明该结果来自哪个真实事件。指向同一事件的结果对该理论只计一次，避免同一事实被重复计算。',
+    wouldCount: '影响程度',
+    decisiveness: { weak: '较小', moderate: '中等', decisive: '决定性' },
+    decisivenessHint: '在结果出来之前说明它应在多大程度上改变你的信念。结果记录后即锁定，避免根据结果调整权重。',
     waiting: '等待你说明信念',
     sources: {
       tripwire: '触发条件',

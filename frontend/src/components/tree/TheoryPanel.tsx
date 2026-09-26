@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import EventField from '../theory/EventField.tsx'
+import DecisivenessPicker from '../theory/DecisivenessPicker.tsx'
 import {
   AlertTriangle, ChevronDown, ChevronRight, CircleHelp, Crosshair, FileWarning,
   GitBranch, Lightbulb, Loader2, RefreshCw, Scale, ShieldCheck,
@@ -8,7 +9,7 @@ import {
 import { useT } from '../../i18n/index.tsx'
 import type { CausalGraph } from '../../types/graph.ts'
 import type {
-  BusinessImpact, ChangeSummary, Theory, TheoryStatus,
+  BusinessImpact, ChangeSummary, Decisiveness, Theory, TheoryStatus,
 } from '../../types/reasoning.ts'
 import Progress from '../ui/Progress.tsx'
 import TheoryValueSection from '../theory/TheoryValueSection.tsx'
@@ -100,12 +101,13 @@ interface TheoryCardProps {
   onSelect: (theory: Theory | null) => void
   onDismissObjection?: (objectionId: string) => void
   onObserveTripwire?: (tripwireId: string, observed: boolean, event?: string) => void
+  onSetTripwireDecisiveness?: (tripwireId: string, decisiveness: Decisiveness) => void
   onTheoriesChanged?: () => void
 }
 
 function TheoryCard({
   theory, graph, selected, onSelect,
-  onDismissObjection, onObserveTripwire, onTheoriesChanged,
+  onDismissObjection, onObserveTripwire, onSetTripwireDecisiveness, onTheoriesChanged,
 }: TheoryCardProps) {
   const { t } = useT()
   const [expanded, setExpanded] = useState(false)
@@ -414,6 +416,15 @@ function TheoryCard({
                             · {t.tripwires.checkBy} {tripwire.checkBy.slice(0, 10)}
                           </span>
                         )}
+                        <DecisivenessPicker
+                          value={tripwire.decisiveness ?? 'moderate'}
+                          locked={tripwire.status !== 'pending'}
+                          onChange={
+                            onSetTripwireDecisiveness
+                              ? (level) => onSetTripwireDecisiveness(tripwire.id, level)
+                              : undefined
+                          }
+                        />
                         {tripwire.status === 'pending' && onObserveTripwire ? (
                           <>
                             <button
@@ -493,6 +504,7 @@ interface TheoryPanelProps {
   onRunOutsideView?: () => void
   onDismissObjection?: (objectionId: string) => void
   onObserveTripwire?: (tripwireId: string, observed: boolean, event?: string) => void
+  onSetTripwireDecisiveness?: (tripwireId: string, decisiveness: Decisiveness) => void
   /** Reload the theory list after a recorded result changes it (e.g. marks it stale). */
   onTheoriesChanged?: () => void
   /** Required framing answers still missing. Reported, never enforced: the
@@ -520,6 +532,7 @@ export default function TheoryPanel({
   onRunOutsideView,
   onDismissObjection,
   onObserveTripwire,
+  onSetTripwireDecisiveness,
   onTheoriesChanged,
   challenging = false,
 }: TheoryPanelProps) {
@@ -763,6 +776,7 @@ export default function TheoryPanel({
               onSelect={onSelectTheory}
               onDismissObjection={onDismissObjection}
               onObserveTripwire={onObserveTripwire}
+              onSetTripwireDecisiveness={onSetTripwireDecisiveness}
               onTheoriesChanged={onTheoriesChanged}
             />
           ))}

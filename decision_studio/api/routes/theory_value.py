@@ -74,6 +74,7 @@ class HypothesisResponse(BaseModel):
     status: Literal["open", "held", "refuted", "inconclusive"]
     observed_note: str | None = None
     observed_at: datetime | None = None
+    decisiveness: Literal["weak", "moderate", "decisive"] = "moderate"
 
 
 class HypothesisListResponse(BaseModel):
@@ -114,6 +115,7 @@ def _hypothesis(row: LinkHypothesis) -> HypothesisResponse:
         leverage=row.leverage, uncertainty=row.uncertainty,
         status=row.status,  # type: ignore[arg-type]
         observed_note=row.observed_note, observed_at=row.observed_at,
+        decisiveness=row.decisiveness or "moderate",  # type: ignore[arg-type]
     )
 
 
@@ -292,6 +294,31 @@ async def record_hypothesis_result(
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _hypothesis(row)
+
+
+class DecisivenessRequest(BaseModel):
+    decisiveness: Literal["weak", "moderate", "decisive"]
+
+
+@router.patch(
+    "/graph/{project_id}/hypotheses/{hypothesis_id}/decisiveness",
+    response_model=HypothesisResponse,
+)
+async def set_hypothesis_decisiveness(
+    project_id: UUID,
+    hypothesis_id: UUID,
+    req: DecisivenessRequest,
+    session: AsyncSession = Depends(get_session),
+) -> HypothesisResponse:
+    """How much this link test would count. Only while it is still open."""
+    await _require_project(project_id, session)
+    try:
+        row = await link_tests.set_decisiveness(session, project_id, hypothesis_id, req.decisiveness)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _hypothesis(row)
 
 

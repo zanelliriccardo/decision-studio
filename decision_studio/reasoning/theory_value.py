@@ -87,17 +87,36 @@ def bayes_update(prior: float, likelihood_ratios: Iterable[float]) -> float:
     return clamp_probability(posterior)
 
 
-def tripwire_likelihood(direction: str, observed: bool) -> float:
+DECISIVENESS = ("weak", "moderate", "decisive")
+
+#: How much an observation that happens moves the odds, by the decisiveness the
+#: decider stated before looking. "Moderate" is the previous fixed default, so
+#: nothing recorded without a stated decisiveness changes.
+PRESENCE_LR = {"weak": 2.0, "moderate": 4.0, "decisive": 10.0}
+
+#: The same for a result that does not happen. Absence is weaker evidence than
+#: presence however decisive the test (it may simply not have happened *yet*),
+#: so only a weak test is discounted further.
+ABSENCE_LR = {"weak": 1.2, "moderate": 1.5, "decisive": 1.5}
+
+
+def decisiveness_of(value: str | None) -> str:
+    return value if value in DECISIVENESS else "moderate"
+
+
+def tripwire_likelihood(direction: str, observed: bool, decisiveness: str | None = None) -> float:
     """The default likelihood ratio of a tripwire outcome.
 
     A falsifier that fires is strong evidence against (the user committed in
-    advance that it would change their mind). One that does not fire is mild
-    evidence for: the theory survived a test it could have failed, but absence
-    of an observation is weaker than presence. A confirmer is the mirror image.
+    advance that it would change their mind); how strong is what they said,
+    in advance, it would be. One that does not fire is mild evidence for: the
+    theory survived a test it could have failed, but absence of an observation
+    is weaker than presence. A confirmer is the mirror image.
     """
+    level = decisiveness_of(decisiveness)
     if direction == "confirms":
-        return LIKELIHOOD_SCALE["strongly_for"] if observed else 1 / 1.5
-    return LIKELIHOOD_SCALE["strongly_against"] if observed else 1.5
+        return PRESENCE_LR[level] if observed else 1 / ABSENCE_LR[level]
+    return 1 / PRESENCE_LR[level] if observed else ABSENCE_LR[level]
 
 
 @dataclass

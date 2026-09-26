@@ -123,3 +123,34 @@ async def test_options_are_compared_on_the_reviewed_graph(session):
 
     response = await compare_options(project.id, session)
     assert response.options[0].key == "O1"
+
+
+async def test_decisiveness_is_stated_in_advance_and_sets_the_weight(session):
+    project, theories = await _anchored_project_with_theories(session)
+    theory = theories[VENDOR]
+    key = theory.theory_key
+    await theory_value.state_prior(session, project.id, key, 0.6)
+    decisive = TheoryTripwire(theory_id=theory.id, observable="Vendor misses 1 August",
+                              direction="falsifies", horizon_days=30)
+    session.add(decisive)
+    await session.commit()
+
+    await adversary.set_tripwire_decisiveness(session, project.id, decisive.id, "decisive")
+    await adversary.record_observation(session, project.id, decisive.id, observed=True)
+    conviction = (await theory_value.convictions(session, project.id, [key]))[str(key)]
+    assert conviction.current == pytest.approx(bayes_update(0.6, [0.1]))
+
+    # Locked once observed: the weight cannot be chosen to fit the result.
+    with pytest.raises(ValueError):
+        await adversary.set_tripwire_decisiveness(session, project.id, decisive.id, "weak")
+
+
+def test_moderate_is_the_old_default():
+    from decision_studio.reasoning.link_tests import DEFAULT_RESULT_LR, result_likelihood
+    from decision_studio.reasoning.theory_value import tripwire_likelihood
+
+    assert tripwire_likelihood("falsifies", True) == pytest.approx(0.25)
+    assert tripwire_likelihood("confirms", False) == pytest.approx(1 / 1.5)
+    assert tripwire_likelihood("falsifies", True, "weak") == pytest.approx(0.5)
+    assert result_likelihood("refuted", None) == DEFAULT_RESULT_LR["refuted"]
+    assert result_likelihood("held", "decisive") > result_likelihood("held", "weak")

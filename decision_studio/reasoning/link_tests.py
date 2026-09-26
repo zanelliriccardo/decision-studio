@@ -59,6 +59,20 @@ DEFAULT_RESULT_LR = {
     "inconclusive": LIKELIHOOD_SCALE["neutral"],
 }
 
+#: The same, by the decisiveness the decider stated before testing. "Moderate"
+#: is ``DEFAULT_RESULT_LR``, so results recorded without one are unchanged.
+RESULT_LR_BY_DECISIVENESS = {
+    "weak": {"held": 1.5, "refuted": 0.5, "inconclusive": 1.0},
+    "moderate": DEFAULT_RESULT_LR,
+    "decisive": {"held": 3.0, "refuted": 0.1, "inconclusive": 1.0},
+}
+
+
+def result_likelihood(result: str, decisiveness: str | None) -> float:
+    from decision_studio.reasoning.theory_value import decisiveness_of
+
+    return RESULT_LR_BY_DECISIVENESS[decisiveness_of(decisiveness)][result]
+
 
 class LinkTestError(ValueError):
     """Raised when a theory has nothing that can be tested link by link."""
@@ -266,7 +280,8 @@ async def record_result(
     row.observed_at = datetime.now(timezone.utc)
     await record_evidence(
         session, project_id, row.theory_key,
-        likelihood_ratio if likelihood_ratio is not None else DEFAULT_RESULT_LR[result],
+        likelihood_ratio if likelihood_ratio is not None
+        else result_likelihood(result, row.decisiveness),
         source="link_hypothesis", source_id=row.id,
         note=f"Link {result}: {row.statement}",
         event=event,
@@ -285,6 +300,34 @@ async def record_result(
         if current is not None:
             current.is_stale = True
             current.stale_reason = f"A tested link was refuted: {row.statement}"
+    await session.commit()
+    await session.refresh(row)
+    return row
+
+
+async def set_decisiveness(
+    session: AsyncSession, project_id: UUID, hypothesis_id: UUID, decisiveness: str
+) -> LinkHypothesis:
+    """State how much a link test would count, before it is run.
+
+    Raises:
+        LookupError: unknown hypothesis.
+        ValueError: already tested (see adversary.set_tripwire_decisiveness).
+    """
+    from decision_studio.reasoning.theory_value import DECISIVENESS
+
+    if decisiveness not in DECISIVENESS:
+        raise ValueError(f"Decisiveness must be one of {', '.join(DECISIVENESS)}")
+    row = (await session.execute(
+        select(LinkHypothesis).where(
+            LinkHypothesis.id == hypothesis_id, LinkHypothesis.project_id == project_id
+        )
+    )).scalars().first()
+    if row is None:
+        raise LookupError(f"Hypothesis {hypothesis_id} not found in project")
+    if row.status != "open":
+        raise ValueError("Decisiveness is stated before testing, and this link has been tested")
+    row.decisiveness = decisiveness
     await session.commit()
     await session.refresh(row)
     return row

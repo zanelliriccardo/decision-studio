@@ -301,6 +301,14 @@ class TripwireResponse(BaseModel):
     status: Literal["pending", "observed", "not_observed", "expired"]
     observed_at: datetime | None = None
     observed_note: str | None = None
+    #: How much the decider said, in advance, this observation would count.
+    decisiveness: Literal["weak", "moderate", "decisive"] = "moderate"
+
+
+class DecisivenessRequest(BaseModel):
+    """Stated before the result is known, so the weight cannot be fitted to it."""
+
+    decisiveness: Literal["weak", "moderate", "decisive"]
 
 
 class ObservationRequest(BaseModel):
