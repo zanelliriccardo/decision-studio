@@ -1,5 +1,12 @@
 """Prompts and schemas for Stage 1: Claim Extraction."""
 
+from copy import deepcopy
+
+from decision_studio.llm.prompts.decision_anchor import (
+    DECISION_ROLE_GUIDE,
+    EXTRACTION_ANCHOR_PROPERTIES,
+)
+
 CLAIM_EXTRACTION_SYSTEM = """\
 You are an expert analyst specializing in deconstructing arguments, narratives, \
 and complex texts into their fundamental atomic claims.
@@ -158,3 +165,46 @@ CLAIM_EXTRACTION_SCHEMA = {
     "required": ["claims", "has_temporal_relevance"],
     "additionalProperties": False,
 }
+
+
+# ---------------------------------------------------------------------------
+# Anchored extraction: used when the project has a decision anchor.
+# ---------------------------------------------------------------------------
+
+ANCHORED_EXTRACTION_ADDENDUM = f"""
+
+## The decision these claims serve
+
+The user message opens with the decision being made: its options (O1, O2 ...) \
+and the outcomes that define success (Y1, Y2 ...). The claims are raw material \
+for choosing between those options, so for each claim also record:
+
+{DECISION_ROLE_GUIDE}
+
+Extraction stays complete and faithful. The decision changes what you record \
+about each claim, not which claims exist: extract background too, and score it \
+low. One addition: where the text clearly implies — without stating — how \
+something affects an option or an outcome, and a careful reader of this text \
+would draw that inference, extract it as an ASSUMPTION whose source_sentence is \
+the sentence(s) it rests on. Never speculate beyond what the text supports."""
+
+
+def claim_extraction_system(anchored: bool) -> str:
+    """The extraction system prompt, with the anchor guide when there is one."""
+    return CLAIM_EXTRACTION_SYSTEM + (ANCHORED_EXTRACTION_ADDENDUM if anchored else "")
+
+
+def claim_extraction_schema(anchored: bool) -> dict:
+    """The extraction schema, with the four anchor fields required when anchored.
+
+    Required rather than optional because strict structured output accepts no
+    optional properties, and because an unscored claim in an anchored run would
+    be indistinguishable from background.
+    """
+    if not anchored:
+        return CLAIM_EXTRACTION_SCHEMA
+    schema = deepcopy(CLAIM_EXTRACTION_SCHEMA)
+    item = schema["properties"]["claims"]["items"]
+    item["properties"].update(deepcopy(EXTRACTION_ANCHOR_PROPERTIES))
+    item["required"] = item["required"] + list(EXTRACTION_ANCHOR_PROPERTIES)
+    return schema

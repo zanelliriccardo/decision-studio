@@ -1,3 +1,4 @@
+# DEAD-CODE-CANDIDATE DC-05 [module]: clarification-question system removed in migration 016 (HANDOVER 4.9); nothing imports it. See docs/DEAD_CODE_REPORT.md
 """AI clarification questions: generation, lifecycle and application.
 
 A clarification question exists to move a decision, so the service is built

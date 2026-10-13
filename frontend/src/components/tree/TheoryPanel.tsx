@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react'
+import EventField from '../theory/EventField.tsx'
+import DecisivenessPicker from '../theory/DecisivenessPicker.tsx'
 import {
   AlertTriangle, ChevronDown, ChevronRight, CircleHelp, Crosshair, FileWarning,
   GitBranch, Lightbulb, Loader2, RefreshCw, Scale, ShieldCheck,
@@ -7,9 +9,11 @@ import {
 import { useT } from '../../i18n/index.tsx'
 import type { CausalGraph } from '../../types/graph.ts'
 import type {
-  BusinessImpact, ChangeSummary, Theory, TheoryStatus,
+  BusinessImpact, ChangeSummary, Decisiveness, Theory, TheoryStatus,
 } from '../../types/reasoning.ts'
 import Progress from '../ui/Progress.tsx'
+import TheoryValueSection from '../theory/TheoryValueSection.tsx'
+import OptionCoverageStrip from '../theory/OptionCoverageStrip.tsx'
 
 /**
  * The Theories tab.
@@ -96,15 +100,18 @@ interface TheoryCardProps {
   selected: boolean
   onSelect: (theory: Theory | null) => void
   onDismissObjection?: (objectionId: string) => void
-  onObserveTripwire?: (tripwireId: string, observed: boolean) => void
+  onObserveTripwire?: (tripwireId: string, observed: boolean, event?: string) => void
+  onSetTripwireDecisiveness?: (tripwireId: string, decisiveness: Decisiveness) => void
+  onTheoriesChanged?: () => void
 }
 
 function TheoryCard({
   theory, graph, selected, onSelect,
-  onDismissObjection, onObserveTripwire,
+  onDismissObjection, onObserveTripwire, onSetTripwireDecisiveness, onTheoriesChanged,
 }: TheoryCardProps) {
   const { t } = useT()
   const [expanded, setExpanded] = useState(false)
+  const [tripwireEvent, setTripwireEvent] = useState('')
 
   const evidence = useMemo(() => {
     if (!graph) return { supporting: [], contradicting: [] }
@@ -157,6 +164,14 @@ function TheoryCard({
           {theory.title}
         </h4>
         <p className="text-xs text-text-secondary leading-relaxed">{theory.summary}</p>
+
+        {/* The option it argues about, the decider's conviction, and the tests
+            that can move it. */}
+        <TheoryValueSection
+          theory={theory}
+          anchor={graph?.decisionAnchor}
+          onChanged={onTheoriesChanged}
+        />
 
         {/* Confidence as a band. Nothing here has ever been calibrated, so a
             percentage asserts a resolution the pipeline does not possess. */}
@@ -374,6 +389,15 @@ function TheoryCard({
                   {t.tripwires.title}
                 </h5>
                 <p className="text-[10px] text-text-muted mb-1.5">{t.tripwires.hint}</p>
+                {onObserveTripwire && theory.tripwires.some((tw) => tw.status === 'pending') && (
+                  <div className="mb-1.5">
+                    <EventField
+                      projectId={theory.projectId}
+                      value={tripwireEvent}
+                      onChange={setTripwireEvent}
+                    />
+                  </div>
+                )}
                 <ul className="space-y-1.5">
                   {theory.tripwires.map((tripwire) => (
                     <li
@@ -392,18 +416,27 @@ function TheoryCard({
                             · {t.tripwires.checkBy} {tripwire.checkBy.slice(0, 10)}
                           </span>
                         )}
+                        <DecisivenessPicker
+                          value={tripwire.decisiveness ?? 'moderate'}
+                          locked={tripwire.status !== 'pending'}
+                          onChange={
+                            onSetTripwireDecisiveness
+                              ? (level) => onSetTripwireDecisiveness(tripwire.id, level)
+                              : undefined
+                          }
+                        />
                         {tripwire.status === 'pending' && onObserveTripwire ? (
                           <>
                             <button
                               type="button"
-                              onClick={() => onObserveTripwire(tripwire.id, true)}
+                              onClick={() => onObserveTripwire(tripwire.id, true, tripwireEvent)}
                               className="text-[9px] px-1.5 py-0.5 rounded bg-surface-700 text-text-secondary border border-surface-600 hover:bg-surface-600 transition-colors"
                             >
                               {t.tripwires.happened}
                             </button>
                             <button
                               type="button"
-                              onClick={() => onObserveTripwire(tripwire.id, false)}
+                              onClick={() => onObserveTripwire(tripwire.id, false, tripwireEvent)}
                               className="text-[9px] px-1.5 py-0.5 rounded bg-surface-700 text-text-secondary border border-surface-600 hover:bg-surface-600 transition-colors"
                             >
                               {t.tripwires.didNotHappen}
@@ -470,7 +503,10 @@ interface TheoryPanelProps {
   onGenerateTripwires?: () => void
   onRunOutsideView?: () => void
   onDismissObjection?: (objectionId: string) => void
-  onObserveTripwire?: (tripwireId: string, observed: boolean) => void
+  onObserveTripwire?: (tripwireId: string, observed: boolean, event?: string) => void
+  onSetTripwireDecisiveness?: (tripwireId: string, decisiveness: Decisiveness) => void
+  /** Reload the theory list after a recorded result changes it (e.g. marks it stale). */
+  onTheoriesChanged?: () => void
   /** Required framing answers still missing. Reported, never enforced: the
       theories generate anyway and are weaker for the gaps. */
   challenging?: boolean
@@ -496,6 +532,8 @@ export default function TheoryPanel({
   onRunOutsideView,
   onDismissObjection,
   onObserveTripwire,
+  onSetTripwireDecisiveness,
+  onTheoriesChanged,
   challenging = false,
 }: TheoryPanelProps) {
   const { t } = useT()
@@ -724,6 +762,10 @@ export default function TheoryPanel({
           </p>
         )}
 
+        {hasTheories && (
+          <OptionCoverageStrip anchor={graph?.decisionAnchor} theories={theories} />
+        )}
+
         <div className="space-y-2.5">
           {visible.map((theory) => (
             <TheoryCard
@@ -734,6 +776,8 @@ export default function TheoryPanel({
               onSelect={onSelectTheory}
               onDismissObjection={onDismissObjection}
               onObserveTripwire={onObserveTripwire}
+              onSetTripwireDecisiveness={onSetTripwireDecisiveness}
+              onTheoriesChanged={onTheoriesChanged}
             />
           ))}
         </div>

@@ -1,3 +1,4 @@
+// DEAD-CODE-CANDIDATE DC-31 [file]: screen removed from routing (App.tsx); unreachable from main.tsx. See docs/DEAD_CODE_REPORT.md
 /**
  * CausalAnalysisScreen — Three-layer causal analysis dashboard.
  *

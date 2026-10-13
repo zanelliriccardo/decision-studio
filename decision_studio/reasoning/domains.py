@@ -1,3 +1,4 @@
+# DEAD-CODE-CANDIDATE DC-03 [module]: domain question templates for the removed framing; imported only by DC-01. See docs/DEAD_CODE_REPORT.md
 """Domain-specific framing questions.
 
 The core catalogue in ``framing.py`` asks what is true of every decision: what is

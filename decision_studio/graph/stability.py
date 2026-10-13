@@ -115,7 +115,9 @@ def compile_graph(graph: nx.DiGraph, base_sigma: float = DEFAULT_SIGMA) -> _Comp
     edges: dict[tuple[str, str], tuple[float, float, float, bool]] = {}
     for source, target, data in graph.edges(data=True):
         weight = data.get("strength", 0.5)
-        modulation = _evidence_modulation(data.get("evidence_score", 0.5))
+        modulation = _evidence_modulation(
+            data.get("evidence_score", 0.5), data.get("has_contradiction", False)
+        )
         confidence = data.get("link_confidence")
         if confidence is None:
             # Pre-split edge: no confidence to scale by, so use full sigma.
@@ -365,81 +367,75 @@ def compare_stability(
 
 
 @dataclass
-class RankStability:
-    """How often each option ranked first once the inputs were shaken."""
+class OptionForecast:
+    """What the graph predicts for the outcomes if one option is chosen."""
 
     option_id: str
+    #: Per outcome node: belief distribution under this option.
+    outcomes: dict[str, NodeStability]
+    #: Mean point belief across the outcome nodes.
     score: float
-    p_first: float
-    p10: float
-    p50: float
-    p90: float
-    samples: list[float] = field(default_factory=list, repr=False)
+    #: Share of runs in which this option scored best overall (ties split).
+    p_best: float
+    #: Per outcome node: share of runs in which this option was best on it.
+    p_best_by_outcome: dict[str, float] = field(default_factory=dict)
+    #: Other option id -> {outcome node or WEIGHTED: share of runs in which this
+    #: option was higher than that one}. Ties count half.
+    higher_than: dict[str, dict[str, float]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         """This result, for the API."""
         return {
             "option_id": self.option_id,
             "score": round(self.score, 4),
-            "p_first": round(self.p_first, 3),
-            "p10": round(self.p10, 4),
-            "p50": round(self.p50, 4),
-            "p90": round(self.p90, 4),
+            "p_best": round(self.p_best, 3),
+            "outcomes": {k: v.as_dict() for k, v in self.outcomes.items()},
+            "p_best_by_outcome": {k: round(v, 3) for k, v in self.p_best_by_outcome.items()},
         }
 
 
-def rank_stability(
+#: A leader that wins fewer runs than this is not a finding.
+DECISIVE_SHARE = 0.60
+
+#: Key under which ``higher_than`` holds the comparison of the overall score.
+WEIGHTED = "__weighted__"
+
+
+def _winners(scores: dict[str, float]) -> list[str]:
+    best = max(scores.values())
+    return [oid for oid, v in scores.items() if v >= best - TIE_EPSILON]
+
+
+def compare_options(
     options: dict[str, nx.DiGraph],
     outcome_nodes: list[str],
     *,
-    baseline: nx.DiGraph | None = None,
     runs: int = DEFAULT_RUNS,
     sigma: float = DEFAULT_SIGMA,
     seed: int = DEFAULT_SEED,
-) -> tuple[dict[str, RankStability], bool]:
-    """Rank options by their effect on outcome nodes, and say how solid it is.
+    weights: dict[str, float] | None = None,
+) -> tuple[dict[str, OptionForecast], bool]:
+    """Compare options by what the graph predicts for the success criteria.
 
     Args:
-        options: option id -> its graph.
-        outcome_nodes: nodes whose beliefs constitute the score. A lower belief
-            on a problem outcome is better, so the score is negated.
-        baseline: graph to measure movement against. Absolute beliefs are used
-            when omitted.
+        options: option id -> the graph with that option chosen (an intervention
+            on its levers, see reasoning/option_comparison.py).
+        outcome_nodes: success criteria. Higher belief is better.
         runs: simulations.
+        weights: outcome node -> weight for the overall score (the decider's
+            priorities, reasoning/decision_priorities.py). Equal when omitted.
+            Nodes with no or zero weight do not enter the overall score.
 
     Returns:
-        ``(per_option_stability, decisive)``. ``decisive`` is False when the
-        leader wins fewer than 60% of runs — at which point the ranking should
+        ``(per_option, decisive)``. ``decisive`` is False when the leader is
+        best in fewer than ``DECISIVE_SHARE`` of runs — the ranking should then
         not be reported as a finding.
     """
-    if not options:
+    if not options or not outcome_nodes:
         return {}, False
 
     compiled = {oid: compile_graph(g, sigma) for oid, g in options.items()}
-    compiled_baseline = compile_graph(baseline, sigma) if baseline is not None else None
-
-    def score(beliefs: dict[str, float], base: dict[str, float] | None) -> float:
-        """Total belief across the outcome nodes, for one simulated run."""
-        total = 0.0
-        for node in outcome_nodes:
-            value = beliefs.get(node, 0.0)
-            if base is not None:
-                value -= base.get(node, 0.0)
-            total += -value  # lowering a problem outcome is an improvement
-        return total
-
-    point_scores = {
-        oid: score(
-            propagate_once(c),
-            propagate_once(compiled_baseline) if compiled_baseline else None,
-        )
-        for oid, c in compiled.items()
-    }
-
-    rng = random.Random(seed)
-    all_compiled = list(compiled.values()) + (
-        [compiled_baseline] if compiled_baseline else []
-    )
+    all_compiled = list(compiled.values())
     all_edges = sorted({key for c in all_compiled for key in c.edges})
 
     sigmas: dict[tuple[str, str], float] = {}
@@ -458,63 +454,89 @@ def rank_stability(
     # the edges that distinguish them.
     shared_edges: set[tuple[str, str]] = set()
     for key in all_edges:
-        weights = {
-            round(c.edges[key][0], 9) for c in all_compiled if key in c.edges
-        }
-        present_everywhere = all(key in c.edges for c in all_compiled)
-        if present_everywhere and len(weights) == 1:
+        edge_weights = {round(c.edges[key][0], 9) for c in all_compiled if key in c.edges}
+        if all(key in c.edges for c in all_compiled) and len(edge_weights) == 1:
             shared_edges.add(key)
 
-    samples: dict[str, list[float]] = {oid: [] for oid in options}
-    firsts: dict[str, float] = {oid: 0.0 for oid in options}
+    if weights and sum(w for n, w in weights.items() if n in outcome_nodes and w > 0) > 0:
+        weight_of = {n: max(0.0, weights.get(n, 0.0)) for n in outcome_nodes}
+    else:
+        weight_of = {n: 1.0 for n in outcome_nodes}
+    weight_total = sum(weight_of.values())
 
-    for _ in range(runs):
-        shared_jitter = {
-            key: rng.gauss(0.0, sigmas[key]) for key in all_edges if key in shared_edges
-        }
+    def mean_outcome(beliefs: dict[str, float]) -> float:
+        return sum(beliefs.get(n, 0.0) * weight_of[n] for n in outcome_nodes) / weight_total
 
-        def jitter_for(c: _CompiledGraph) -> dict[tuple[str, str], float]:
-            """Noise for one scenario: shared where the scenarios share an edge.
+    pairs = [(a, b) for a in options for b in options if a != b]
+    higher: dict[tuple[str, str], dict[str, float]] = {
+        pair: {key: 0.0 for key in [*outcome_nodes, WEIGHTED]} for pair in pairs
+    }
 
-            Selective common random numbers. Fully shared noise understates the
-            difference between scenarios; fully independent noise swamps it.
-            """
+    def tally(pair: tuple[str, str], key: str, value_a: float, value_b: float) -> None:
+        if value_a > value_b + TIE_EPSILON:
+            higher[pair][key] += 1.0
+        elif abs(value_a - value_b) <= TIE_EPSILON:
+            higher[pair][key] += 0.5
+
+    points = {oid: propagate_once(c) for oid, c in compiled.items()}
+    samples: dict[str, dict[str, list[float]]] = {
+        oid: {n: [] for n in outcome_nodes} for oid in options
+    }
+    best_overall: dict[str, float] = {oid: 0.0 for oid in options}
+    best_by_outcome: dict[str, dict[str, float]] = {
+        oid: {n: 0.0 for n in outcome_nodes} for oid in options
+    }
+
+    rng = random.Random(seed)
+    for _ in range(max(runs, 0)):
+        shared_jitter = {key: rng.gauss(0.0, sigmas[key]) for key in all_edges if key in shared_edges}
+        run_beliefs: dict[str, dict[str, float]] = {}
+        for oid, c in compiled.items():
             draw = dict(shared_jitter)
             for key in c.edges:
                 if key not in shared_edges:
                     draw[key] = rng.gauss(0.0, sigmas[key])
-            return draw
+            run_beliefs[oid] = propagate_once(c, draw)
+            for n in outcome_nodes:
+                samples[oid][n].append(run_beliefs[oid].get(n, 0.0))
 
-        base_beliefs = (
-            propagate_once(compiled_baseline, jitter_for(compiled_baseline))
-            if compiled_baseline
-            else None
-        )
-        run_scores = {
-            oid: score(propagate_once(c, jitter_for(c)), base_beliefs)
-            for oid, c in compiled.items()
-        }
-        for oid, value in run_scores.items():
-            samples[oid].append(value)
-
-        best = max(run_scores.values())
-        winners = [oid for oid, v in run_scores.items() if v >= best - TIE_EPSILON]
+        scores = {oid: mean_outcome(b) for oid, b in run_beliefs.items()}
+        winners = _winners(scores)
         for oid in winners:
-            firsts[oid] += 1.0 / len(winners)
+            best_overall[oid] += 1.0 / len(winners)
+        for a, b in pairs:
+            tally((a, b), WEIGHTED, scores[a], scores[b])
+            for n in outcome_nodes:
+                tally((a, b), n, run_beliefs[a].get(n, 0.0), run_beliefs[b].get(n, 0.0))
+        for n in outcome_nodes:
+            winners = _winners({oid: b.get(n, 0.0) for oid, b in run_beliefs.items()})
+            for oid in winners:
+                best_by_outcome[oid][n] += 1.0 / len(winners)
 
-    result: dict[str, RankStability] = {}
+    divisor = max(runs, 1)
+    result: dict[str, OptionForecast] = {}
     for oid in options:
-        values = sorted(samples[oid])
-        result[oid] = RankStability(
+        stats: dict[str, NodeStability] = {}
+        for n in outcome_nodes:
+            values = sorted(samples[oid][n]) or [points[oid].get(n, 0.0)]
+            stats[n] = NodeStability(
+                point=points[oid].get(n, 0.0),
+                p10=_percentile(values, 0.10),
+                p50=_percentile(values, 0.50),
+                p90=_percentile(values, 0.90),
+                mean=sum(values) / len(values),
+            )
+        result[oid] = OptionForecast(
             option_id=oid,
-            score=point_scores[oid],
-            p_first=firsts[oid] / max(runs, 1),
-            p10=_percentile(values, 0.10),
-            p50=_percentile(values, 0.50),
-            p90=_percentile(values, 0.90),
-            samples=values,
+            outcomes=stats,
+            score=mean_outcome(points[oid]),
+            p_best=best_overall[oid] / divisor if runs > 0 else 0.0,
+            p_best_by_outcome={n: v / divisor for n, v in best_by_outcome[oid].items()},
+            higher_than={
+                b: {key: count / divisor for key, count in higher[(a, b)].items()}
+                for a, b in pairs if a == oid
+            } if runs > 0 else {},
         )
 
-    leader = max(result.values(), key=lambda r: r.p_first)
-    decisive = len(options) == 1 or leader.p_first >= 0.60
-    return result, decisive
+    leader = max(result.values(), key=lambda f: f.p_best)
+    return result, len(options) > 1 and leader.p_best >= DECISIVE_SHARE

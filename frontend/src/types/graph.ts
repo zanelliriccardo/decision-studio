@@ -13,6 +13,30 @@ export interface BiasWarning {
   severity: BiasSeverity
 }
 
+/** How a claim relates to the decision, in theory-based-view terms. */
+export type DecisionRole = 'lever' | 'contingency' | 'mechanism' | 'outcome' | 'background'
+
+export interface AnchorOption {
+  key: string
+  label: string
+}
+
+export interface AnchorOutcome {
+  key: string
+  label: string
+  measure: string
+}
+
+/** The decision, stated so the pipeline can steer by it. */
+export interface DecisionAnchor {
+  decision: string
+  options: AnchorOption[]
+  outcomes: AnchorOutcome[]
+  deadline: string
+  constraints: string[]
+  status: 'draft' | 'confirmed'
+}
+
 export interface CausalNode {
   id: string
   text: string
@@ -27,6 +51,10 @@ export interface CausalNode {
   sourceSentence: string | null
   beliefLow: number | null
   beliefHigh: number | null
+  /** The belief if causes sharing a driver move together; set only where it differs materially. */
+  beliefIfDependent?: number | null
+  /** The upstream claims those causes share (empty: inherited from further up). */
+  sharedCauses?: string[]
   // Human review state
   reviewStatus: ReviewStatus
   isActive: boolean
@@ -38,6 +66,23 @@ export interface CausalNode {
   /** Source sentences of duplicate claims merged into this one. */
   corroboratedBy: string[] | null
   duplicateCount: number
+  // Relation to the decision anchor. Optional: absent on unanchored projects
+  // and on nodes streamed mid-run.
+  /** 'ai', 'user', or 'frame' for an outcome node created from the anchor. */
+  origin?: string
+  decisionRole?: DecisionRole | null
+  /** The model's 0-1 reading of how much this claim could change the choice. */
+  relevance?: number | null
+  relevanceReason?: string | null
+  /** Option and outcome keys (O1, Y2 ...) this claim bears on. */
+  bearsOn?: string[] | null
+  /** Causal hops to the nearest outcome; null when no path exists. */
+  anchorDistance?: number | null
+  effectiveRelevance?: number | null
+  /** Read as background by the model, yet on a causal path to an outcome. */
+  isPeripheral?: boolean
+  /** Shown by the decision lens. */
+  inLens?: boolean
   // Layout computed
   x?: number
   y?: number
@@ -93,6 +138,8 @@ export interface Evidence {
   relevanceScore: number
   credibilityScore: number
   sourceTier: number
+  /** Descriptive labels: recent, independent, direct, ... */
+  quality?: { key: string; text: string; tone: 'good' | 'neutral' | 'caution' }[]
 }
 
 
@@ -104,6 +151,7 @@ export interface CausalGraph {
   hasTemporal: boolean
   graphRevision: number
   decisionObjective: string | null
+  decisionAnchor?: DecisionAnchor | null
 }
 
 export interface BeliefChange {

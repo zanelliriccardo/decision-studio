@@ -10,6 +10,7 @@ import { CAUSAL_TYPE_META, LOGIC_GATE_META, BIAS_SEVERITY_COLORS, formatTimeDela
 import Badge from '../ui/Badge.tsx'
 import Progress from '../ui/Progress.tsx'
 import Tooltip from '../ui/Tooltip.tsx'
+import NodeAnchorSection from '../anchor/NodeAnchorSection.tsx'
 
 function HintIcon({ hint }: { hint: string }) {
   return (
@@ -118,6 +119,9 @@ export default function NodeDetailPanel({
           )}
         </div>
 
+        {/* How this claim bears on the decision (anchored projects only) */}
+        <NodeAnchorSection node={node} anchor={graph.decisionAnchor} />
+
         {/* Assertion firmness -- a property of the source text */}
         <div>
           <div className="flex items-center justify-between mb-1">
@@ -191,6 +195,22 @@ export default function NodeDetailPanel({
                   />
                 </div>
               </div>
+            )}
+            {/* Noisy-OR counts causes as independent chances. Where they share
+                a driver that overstates the belief; this is the other end. */}
+            {node.beliefIfDependent != null && (
+              <p className="mt-1 text-[10px] text-amber-300 leading-snug" data-testid="shared-cause">
+                {t.nodeDetail.ifDependent.replace('{p}', `${Math.round(node.beliefIfDependent * 100)}%`)}{' '}
+                {node.sharedCauses && node.sharedCauses.length > 0
+                  ? t.nodeDetail.sharedDriver.replace(
+                      '{claims}',
+                      node.sharedCauses
+                        .map((id) => nodeMap.get(id)?.text ?? id)
+                        .map((text) => `“${text.length > 60 ? `${text.slice(0, 57)}…` : text}”`)
+                        .join(', '),
+                    )
+                  : t.nodeDetail.sharedInherited}
+              </p>
             )}
           </div>
         )}

@@ -60,7 +60,11 @@ export interface Tripwire {
   status: 'pending' | 'observed' | 'not_observed' | 'expired'
   observedAt: string | null
   observedNote: string | null
+  /** How much the decider said, before observing, this would count. */
+  decisiveness: Decisiveness
 }
+
+export type Decisiveness = 'weak' | 'moderate' | 'decisive'
 
 /** One question from the framing questionnaire. */
 
@@ -119,6 +123,16 @@ export interface Theory {
   /** confidence minus the base rate of the matching reference class. */
   outsideViewDelta: number | null
   outsideViewNote: string | null
+  // --- Theory of value (optional: absent from older servers and fixtures) ---
+  /** The anchor option this is a theory of (O1..). */
+  optionKey?: string | null
+  predictedEffect?: 'achieves' | 'threatens' | 'unclear' | null
+  outcomeKeys?: string[]
+  /** Whether the validated chain reaches an outcome node. Computed, not claimed. */
+  reachesOutcome?: boolean
+  /** The decider's belief, after observations. Not the model's confidence. */
+  conviction?: number | null
+  convictionPrior?: number | null
 }
 
 /** How two theories relate, computed from the graph rather than judged. */
@@ -283,6 +297,12 @@ export interface ApiTheory {
   confidence_band?: ConfidenceBand
   outside_view_delta?: number | null
   outside_view_note?: string | null
+  option_key?: string | null
+  predicted_effect?: 'achieves' | 'threatens' | 'unclear' | null
+  outcome_keys?: string[]
+  reaches_outcome?: boolean
+  conviction?: number | null
+  conviction_prior?: number | null
   objections?: Array<{
     id: string
     objection: string
@@ -299,6 +319,7 @@ export interface ApiTheory {
     status: 'pending' | 'observed' | 'not_observed' | 'expired'
     observed_at: string | null
     observed_note: string | null
+    decisiveness?: 'weak' | 'moderate' | 'decisive'
   }>
 }
 

@@ -81,7 +81,12 @@ def _noisy_or_belief_full(
         edge_data = graph.edges[parent_id, node_id]
         strength = edge_data.get("strength", 0.5)
         ev_score = edge_data.get("evidence_score", 0.5)
-        effective = strength * _evidence_modulation(ev_score)
+        # The contradiction flag was set on every edge and read by nothing, so
+        # a link three sources contradicted kept the same floor as one nobody
+        # had searched for — the opposite of what _evidence_modulation states.
+        effective = strength * _evidence_modulation(
+            ev_score, edge_data.get("has_contradiction", False)
+        )
         causal_type = edge_data.get("causal_type", "direct")
 
         if causal_type == "inhibiting":
@@ -107,7 +112,9 @@ def _and_gate_belief(
         edge_data = graph.edges[parent_id, node_id]
         strength = edge_data.get("strength", 0.5)
         ev_score = edge_data.get("evidence_score", 0.5)
-        effective = strength * _evidence_modulation(ev_score)
+        effective = strength * _evidence_modulation(
+            ev_score, edge_data.get("has_contradiction", False)
+        )
         belief *= parent_belief * effective
 
     return max(0.0, min(1.0, belief))
@@ -153,6 +160,7 @@ def propagate_beliefs(graph: nx.DiGraph) -> nx.DiGraph:
     return graph
 
 
+# DEAD-CODE-CANDIDATE DC-15: marked DEPRECATED in its docstring; no callers (graph/stability.py replaced it). See docs/DEAD_CODE_REPORT.md
 def compute_belief_intervals(
     graph: nx.DiGraph, perturbation: float = 0.1
 ) -> dict[str, tuple[float, float]]:

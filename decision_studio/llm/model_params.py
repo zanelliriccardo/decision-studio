@@ -175,6 +175,7 @@ def _record(model: str, param: str) -> None:
         )
 
 
+# DEAD-CODE-CANDIDATE DC-18: no callers (probably a test helper whose tests are not in the repo). See docs/DEAD_CODE_REPORT.md
 def reset_cache() -> None:
     """Forget what has been learned. For tests."""
     _UNSUPPORTED.clear()

@@ -127,6 +127,7 @@ describe('transformTheory', () => {
   })
 })
 
+// DEAD-CODE-CANDIDATE DC-41: tests functions removed with the clarification system; these are pre-existing failures. See docs/DEAD_CODE_REPORT.md
 describe('transformQuestion', () => {
   it('maps every wire field', () => {
     const question = transformQuestion(apiQuestion)
@@ -275,6 +276,7 @@ describe('review endpoints', () => {
   })
 })
 
+// DEAD-CODE-CANDIDATE DC-41: tests functions removed with the clarification system; these are pre-existing failures. See docs/DEAD_CODE_REPORT.md
 describe('clarification endpoints', () => {
   it('fetches and transforms questions', async () => {
     apiGet.mockResolvedValue({ questions: [apiQuestion], open_count: 1 })

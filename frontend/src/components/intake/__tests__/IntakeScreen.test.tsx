@@ -119,7 +119,7 @@ describe('IntakeScreen', () => {
     } as never)
 
     renderScreen()
-    await userEvent.click(await screen.findByRole('button', { name: /start anyway/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /start the analysis/i }))
 
     await waitFor(() => expect(startCall(post)).toBeTruthy())
     expect(startCall(post)?.[1]).toEqual({ answers: [] })
@@ -136,7 +136,7 @@ describe('IntakeScreen', () => {
     renderScreen()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Product team' }))
-    await userEvent.click(screen.getByRole('button', { name: /start the analysis/i }))
+    await userEvent.click(screen.getByRole('button', { name: /start (the analysis|with these answers)/i }))
 
     await waitFor(() => expect(startCall(post)).toBeTruthy())
     expect(startCall(post)?.[1]).toEqual({
@@ -149,8 +149,8 @@ describe('IntakeScreen', () => {
     renderScreen()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Platform team' }))
-    await userEvent.type(screen.getByLabelText(/or write your own/i), 'The data team')
-    await userEvent.click(screen.getByRole('button', { name: /start the analysis/i }))
+    await userEvent.type(screen.getByPlaceholderText(/or write your own/i), 'The data team')
+    await userEvent.click(screen.getByRole('button', { name: /start (the analysis|with these answers)/i }))
 
     await waitFor(() => expect(startCall(post)).toBeTruthy())
     expect(startCall(post)?.[1]).toEqual({
@@ -172,7 +172,7 @@ describe('IntakeScreen', () => {
     const option = await screen.findByRole('button', { name: 'Platform team' })
     await userEvent.click(option)
     await userEvent.click(option)
-    await userEvent.click(screen.getByRole('button', { name: /start the analysis/i }))
+    await userEvent.click(screen.getByRole('button', { name: /start (the analysis|with these answers)/i }))
 
     await waitFor(() => expect(startCall(post)).toBeTruthy())
     expect(startCall(post)?.[1]).toEqual({ answers: [] })
@@ -186,7 +186,7 @@ describe('IntakeScreen', () => {
     renderScreen()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Platform team' }))
-    await userEvent.click(screen.getByRole('button', { name: /start the analysis/i }))
+    await userEvent.click(screen.getByRole('button', { name: /start (the analysis|with these answers)/i }))
 
     await waitFor(() => expect(startCall(post)).toBeTruthy())
     expect(startCall(post)?.[1]).toEqual({
@@ -198,7 +198,10 @@ describe('IntakeScreen', () => {
     const { post } = stubApi([makeQuestion()])
     renderScreen()
 
-    const start = await screen.findByRole('button', { name: /start the analysis/i })
+    // Wait for the questions: the reading screen has a start button of the
+    // same name, and grabbing that one races its replacement.
+    await screen.findByText('Which team is meant here?')
+    const start = screen.getByRole('button', { name: /start (the analysis|with these answers)/i })
     expect(start).not.toBeDisabled()
 
     await userEvent.click(start)

@@ -40,6 +40,11 @@ interface ForceGraphProps {
   onLinkDrawn?: (sourceId: string, targetId: string) => void
 }
 
+// Anchor outcome nodes: the graph's destinations (see lib/decisionAnchor.ts).
+const OUTCOME_STROKE = '#f59e0b'
+const isOutcome = (d: { data: { origin?: string; decisionRole?: string | null } }): boolean =>
+  d.data.origin === 'frame' && d.data.decisionRole === 'outcome'
+
 // Path colors for focus mode
 const PATH_COLORS = ['#f97316', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#f59e0b']
 
@@ -419,6 +424,7 @@ export default function ForceGraph({
       if (isFocus && !isFocusVisible(d.id)) return theme.collapseStroke
       const tb = getNodeTemporalBelief(d.id)
       if (tb != null && !isTimeFiltered(d.id)) return beliefColor(tb)
+      if (isOutcome(d)) return OUTCOME_STROKE
       return confidenceColor(d.data.confidence)
     }
     const nodeFillColor = (d: ForceNode): string => {
@@ -939,6 +945,64 @@ export default function ForceGraph({
       .attr('opacity', 0.7)
       .attr('pointer-events', 'none')
 
+    // --- Decision anchor treatment ---
+    // Outcome nodes are the destinations of the graph: a double amber ring and
+    // a target glyph, so they read as different in greyscale too. Peripheral
+    // claims — read as background, yet on a causal path to an outcome — get a
+    // small violet mark in the bottom-left corner, clear of the other badges.
+    const OUTCOME_COLOR = OUTCOME_STROKE
+    const PERIPHERAL_COLOR = '#a78bfa'
+
+    const outcomeNodes = nodeGroups.filter(isOutcome)
+    outcomeNodes.insert('rect', ':first-child')
+      .attr('class', 'outcome-ring')
+      .attr('x', (d) => -nodeWidth(d) / 2 - 5)
+      .attr('y', (d) => -nodeHeight(d) / 2 - 5)
+      .attr('width', (d) => nodeWidth(d) + 10)
+      .attr('height', (d) => nodeHeight(d) + 10)
+      .attr('rx', 12)
+      .attr('ry', 12)
+      .attr('fill', 'none')
+      .attr('stroke', OUTCOME_COLOR)
+      .attr('stroke-width', 2)
+      .attr('pointer-events', 'none')
+    outcomeNodes.selectAll<SVGElement, ForceNode>('.node-rect')
+      .attr('stroke', OUTCOME_COLOR)
+      .attr('stroke-width', 2)
+      .attr('stroke-dasharray', null)
+
+    const cornerBadge = (
+      nodes: typeof nodeGroups,
+      glyph: string,
+      color: string,
+      className: string,
+    ) => {
+      const badge = nodes.append('g')
+        .attr('class', className)
+        // Bottom-left: the top corners hold the claim-type label and the review badge.
+        .attr('transform', (d) => `translate(${-nodeWidth(d) / 2 + 8}, ${nodeHeight(d) / 2 - 8})`)
+        .attr('pointer-events', 'none')
+      badge.append('circle')
+        .attr('r', 7)
+        .attr('fill', '#0f172a')
+        .attr('stroke', color)
+        .attr('stroke-width', 1.2)
+      badge.append('text')
+        .attr('text-anchor', 'middle')
+        .attr('dy', '0.32em')
+        .attr('font-size', '9px')
+        .attr('font-weight', 'bold')
+        .attr('fill', color)
+        .text(glyph)
+    }
+    cornerBadge(outcomeNodes, '\u25CE', OUTCOME_COLOR, 'outcome-badge')
+    cornerBadge(
+      nodeGroups.filter((d) => d.data.isPeripheral === true),
+      '\u25C7',
+      PERIPHERAL_COLOR,
+      'peripheral-badge',
+    )
+
     // Focus node highlight (persistent hover-like border)
     if (isFocus && focusNodeId) {
       nodeGroups.filter((d) => d.id === focusNodeId)
@@ -1279,6 +1343,7 @@ export default function ForceGraph({
       if (hasTemporalBeliefLocal && !isTimeFilteredLocal(d.id)) {
         return beliefColor(beliefAtTimeFnLocal!(d.id, timeFilter!))
       }
+      if (isOutcome(d)) return OUTCOME_STROKE
       return confidenceColor(d.data.confidence)
     }
 

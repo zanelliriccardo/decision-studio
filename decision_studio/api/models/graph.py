@@ -24,6 +24,12 @@ class ClaimResponse(BaseModel):
     source_sentence: str | None = None
     belief_low: float | None = None
     belief_high: float | None = None
+    #: The belief if causes that share a driver move together (graph/shared_causes.py).
+    #: Set only where it differs materially from ``belief``.
+    belief_if_dependent: float | None = None
+    #: The upstream claims those causes share. Empty when the gap is inherited
+    #: from a claim further up.
+    shared_causes: list[str] = []
     # --- Human review state (decision reasoning) ---
     review_status: str = "accepted"
     is_active: bool = True
@@ -32,6 +38,20 @@ class ClaimResponse(BaseModel):
     prior: float = 0.5
     corroborated_by: list[str] | None = None
     duplicate_count: int = 0
+    # --- Relation to the decision anchor (null without an anchor) ---
+    origin: str = "ai"
+    decision_role: str | None = None
+    relevance: float | None = None
+    relevance_reason: str | None = None
+    bears_on: list[str] | None = None
+    #: Causal hops to the nearest outcome node; null with no path.
+    anchor_distance: int | None = None
+    #: max(stated relevance, structural relevance). See graph/anchoring.py.
+    effective_relevance: float | None = None
+    #: Read as background by the model, yet on a causal path to an outcome.
+    is_peripheral: bool = False
+    #: Shown by the decision lens by default.
+    in_lens: bool = True
 
 
 class EvidenceResponse(BaseModel):
@@ -48,6 +68,8 @@ class EvidenceResponse(BaseModel):
     source_tier: int = 4
     freshness_score: float = 0.5
     published_date: datetime | None = None
+    #: Descriptive labels (recent, independent, direct, ...): reasoning/evidence_quality.py
+    quality: list[dict[str, str]] = []
 
 
 class EdgeResponse(BaseModel):
@@ -101,6 +123,7 @@ class GraphResponse(BaseModel):
     has_temporal: bool = True
     graph_revision: int = 1
     decision_objective: str | None = None
+    decision_anchor: dict | None = None
 
 
 class EdgeUpdateRequest(BaseModel):

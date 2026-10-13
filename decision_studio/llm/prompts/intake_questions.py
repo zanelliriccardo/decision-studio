@@ -1,3 +1,4 @@
+# DEAD-CODE-CANDIDATE DC-08 [module]: prompt for DC-07 only. See docs/DEAD_CODE_REPORT.md
 """Prompt for the questions asked before the causal graph is built.
 
 There are now three question moments, and they answer different things:

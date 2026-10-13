@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowDown, ArrowRight, Download, GitBranch, Loader2,
-  Lightbulb, MinusCircle, PlusCircle, Radar, ShieldAlert,
+  Lightbulb, MinusCircle, PlusCircle, Radar, ShieldAlert, Target,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useT } from '../../i18n/index.tsx'
@@ -10,7 +10,22 @@ import * as reasoningApi from '../../lib/api/reasoning.ts'
 import { apiGet } from '../../lib/api/client.ts'
 import type { Theory } from '../../types/reasoning.ts'
 import ObjectiveEditor from './ObjectiveEditor.tsx'
+import DecisionAnchorCard from '../anchor/DecisionAnchorCard.tsx'
+import TheoryValueSection from '../theory/TheoryValueSection.tsx'
+import OptionCoverageStrip from '../theory/OptionCoverageStrip.tsx'
+import { draftDecisionAnchor, toAnchor } from '../../lib/decisionAnchor.ts'
+import type { DecisionAnchor } from '../../types/graph.ts'
 import UsagePanel from './UsagePanel.tsx'
+import ComparableCases from './ComparableCases.tsx'
+import OptionForecastCard from './OptionForecastCard.tsx'
+import DecisionPrioritiesCard from './DecisionPrioritiesCard.tsx'
+import RobustnessCard from './RobustnessCard.tsx'
+import MindChangersCard from './MindChangersCard.tsx'
+import InformationPriorityCard from './InformationPriorityCard.tsx'
+import AssumptionsCard from './AssumptionsCard.tsx'
+import ScenariosCard from './ScenariosCard.tsx'
+import SubDecisionsCard from './SubDecisionsCard.tsx'
+import TimelineCard from './TimelineCard.tsx'
 
 /**
  * Where an analysis lands: the conclusions, written out.
@@ -38,6 +53,32 @@ export default function DecisionSummary() {
   const [generating, setGenerating] = useState(false)
   const [savingObjective, setSavingObjective] = useState(false)
   const [usage, setUsage] = useState<reasoningApi.AnalysisUsage | null>(null)
+  const [anchor, setAnchor] = useState<DecisionAnchor | null>(null)
+  const [draftingAnchor, setDraftingAnchor] = useState(false)
+  const [comparison, setComparison] = useState<reasoningApi.OptionComparison | null>(null)
+
+  // The options compared on the causal map: one computation feeds the trade-off
+  // table, robustness, drivers and information priority. Recomputed when the
+  // anchor is saved; priorities return their own recomputed comparison.
+  const optionCount = anchor?.options.length ?? 0
+  useEffect(() => {
+    if (!projectId || optionCount < 2) {
+      setComparison(null)
+      return
+    }
+    let cancelled = false
+    reasoningApi
+      .fetchOptionComparison(projectId)
+      .then((loaded) => {
+        if (!cancelled) setComparison(loaded)
+      })
+      .catch(() => {
+        if (!cancelled) setComparison(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, anchor, optionCount])
 
   useEffect(() => {
     if (!projectId) return
@@ -52,6 +93,7 @@ export default function DecisionSummary() {
           apiGet<{
             claims: { id: string; text: string }[]
             decision_objective?: string | null
+            decision_anchor?: unknown
           }>(`/api/v1/graph/${projectId}`),
           reasoningApi.fetchRecommendation(projectId),
           reasoningApi.fetchUsage(projectId),
@@ -60,6 +102,7 @@ export default function DecisionSummary() {
         setTheories(loadedTheories.theories)
         setClaims(loadedGraph.claims ?? [])
         setObjective(loadedGraph.decision_objective ?? null)
+        setAnchor(toAnchor(loadedGraph.decision_anchor))
         setAdvice(loadedAdvice)
         setUsage(loadedUsage)
       } catch (err) {
@@ -74,11 +117,10 @@ export default function DecisionSummary() {
     }
   }, [projectId, t])
 
-  // Ordered by the score that already discounts objections, so a theory nobody
-  // has managed to attack outranks a confident one that has been.
-  const ranked = [...(theories ?? [])].sort(
-    (a, b) => (b.adjustedScore ?? b.confidence) - (a.adjustedScore ?? a.confidence),
-  )
+  // The server's order (theories.rank_key): reaching a success criterion
+  // first, then the decider's conviction, else the objection-discounted score.
+  // Re-sorting here used to disagree with the graph panel and the report.
+  const ranked = theories ?? []
 
   const claimText = (id: string) => claims.find((c) => c.id === id)?.text ?? ''
 
@@ -93,6 +135,27 @@ export default function DecisionSummary() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+      {/* The two ways out of an analysis, before anything else: the causal
+          graph to check the reasoning, and the report for everyone else. */}
+      <div className="flex flex-wrap justify-end gap-2" data-testid="summary-actions">
+        <button
+          type="button"
+          onClick={() => navigate(`/graph/${projectId}`)}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-surface-700 text-text-secondary border border-surface-600 hover:bg-surface-600 transition-colors"
+        >
+          <GitBranch className="w-3.5 h-3.5" aria-hidden="true" />
+          {t.graphList.openGraph}
+        </button>
+        <a
+          href={`/api/v1/graph/${projectId}/brief?format=pdf`}
+          download
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-ocean-500 hover:bg-ocean-400 border border-ocean-500 transition-colors"
+        >
+          <Download className="w-3.5 h-3.5" aria-hidden="true" />
+          {t.graphList.downloadReport}
+        </a>
+      </div>
+
       <header>
         <ObjectiveEditor
           objective={objective}
@@ -104,6 +167,8 @@ export default function DecisionSummary() {
               try {
                 await reasoningApi.setDecisionObjective(projectId, next)
                 setObjective(next)
+                // The server keeps the anchor's decision in step; mirror it.
+                setAnchor((prev) => (prev ? { ...prev, decision: next } : prev))
                 // The advice was written against the old question, so it now
                 // answers something nobody asked. Clearing it makes that
                 // visible rather than leaving stale advice on the page.
@@ -119,7 +184,71 @@ export default function DecisionSummary() {
             })()
           }}
         />
+        <div className="mt-3">
+          {anchor || draftingAnchor ? (
+            <DecisionAnchorCard
+              anchor={anchor}
+              loading={draftingAnchor}
+              projectId={projectId}
+              onSaved={(saved) => {
+                setAnchor(saved)
+                setObjective(saved.decision)
+                // Written against the old decision: clear it, as for the objective.
+                setAdvice(null)
+              }}
+            />
+          ) : (
+            objective && (
+              // An analysis from before anchors existed. Drafting one here and
+              // saving it links outcome nodes into the existing graph and scores
+              // every claim — no re-run.
+              <button
+                type="button"
+                onClick={() => {
+                  if (!projectId) return
+                  setDraftingAnchor(true)
+                  void draftDecisionAnchor(projectId)
+                    .then((drafted) => {
+                      setAnchor(drafted)
+                      if (!drafted) toast.error(t.anchor.saveFailed)
+                    })
+                    .catch(() => toast.error(t.anchor.saveFailed))
+                    .finally(() => setDraftingAnchor(false))
+                }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg bg-amber-500/10 text-amber-300 border border-amber-500/25 hover:bg-amber-500/20 transition-colors"
+                data-testid="anchor-retrofit"
+              >
+                <Target className="w-3 h-3" aria-hidden="true" />
+                {t.anchor.retrofit}
+              </button>
+            )
+          )}
+        </div>
       </header>
+
+      {/* The options compared by the causal map itself, beside the anchor
+          that defines them. Recomputed when the anchor is saved. */}
+      {projectId && comparison && (
+        <>
+          <DecisionPrioritiesCard
+            projectId={projectId}
+            priorities={comparison.priorities}
+            onChanged={setComparison}
+          />
+          <OptionForecastCard comparison={comparison} />
+          {/* The same comparison under explicit assumptions, and inside each
+              option. Refreshed with the comparison (priorities change both). */}
+          <ScenariosCard projectId={projectId} refreshKey={comparison} />
+          {anchor && (
+            <SubDecisionsCard
+              projectId={projectId}
+              options={anchor.options}
+              claims={claims}
+              refreshKey={comparison.priorities}
+            />
+          )}
+        </>
+      )}
 
       {/* The answer, before the explanations it rests on. Someone who has
           waited for an analysis wants to know what it concluded; the reasoning
@@ -224,6 +353,19 @@ export default function DecisionSummary() {
         </section>
       )}
 
+      {/* After the answer, before the full theories: how solid the comparison
+          is, what could change it, and where more information would help. */}
+      {projectId && comparison && <RobustnessCard comparison={comparison} />}
+      {projectId && comparison && <AssumptionsCard projectId={projectId} refreshKey={comparison} />}
+      {projectId && ranked.length > 0 && (
+        <MindChangersCard projectId={projectId} refreshKey={theories} />
+      )}
+      {/* Information priority ranks inputs by their effect on the weighted
+          gap: without a weighted view there is nothing to rank against. */}
+      {projectId && comparison && !comparison.unavailable && comparison.options.some((o) => o.weighted) && (
+        <InformationPriorityCard items={comparison.informationPriority} />
+      )}
+
       {ranked.length === 0 ? (
         <div className="py-12 text-center" data-testid="summary-empty">
           <p className="text-sm text-text-secondary">{t.summary.noTheories}</p>
@@ -234,6 +376,8 @@ export default function DecisionSummary() {
           <p className="text-xs text-text-muted leading-relaxed">
             {t.summary.intro.replace('{n}', String(ranked.length))}
           </p>
+
+          <OptionCoverageStrip anchor={anchor} theories={ranked} />
 
           {ranked.map((theory, index) => {
             const objections = theory.objections.filter((o) => !o.dismissed)
@@ -296,6 +440,17 @@ export default function DecisionSummary() {
                 <p className="text-sm text-text-secondary leading-relaxed">
                   {theory.summary}
                 </p>
+
+                <TheoryValueSection
+                  theory={theory}
+                  anchor={anchor}
+                  onChanged={() => {
+                    if (!projectId) return
+                    void reasoningApi.fetchTheories(projectId)
+                      .then((loaded) => setTheories(loaded.theories))
+                      .catch(() => undefined)
+                  }}
+                />
 
                 {/* The chain, step by step. This is the argument itself; a
                     summary of it is only a claim about the argument. */}
@@ -431,6 +586,23 @@ export default function DecisionSummary() {
         </>
       )}
 
+      {/* After the theories, because it is checked against them: each theory's
+          "compared with cases you have seen" note comes from here. */}
+      {projectId && ranked.length > 0 && (
+        <ComparableCases
+          projectId={projectId}
+          onChecked={() => {
+            void reasoningApi
+              .fetchTheories(projectId)
+              .then((loaded) => setTheories(loaded.theories))
+              .catch(() => undefined)
+          }}
+        />
+      )}
+
+      {/* How the decision got here: what was believed and what changed it. */}
+      {projectId && <TimelineCard projectId={projectId} refreshKey={comparison ?? theories} />}
+
       {/* Below the conclusions: operational information, not a finding. */}
       <UsagePanel usage={usage} />
 
@@ -446,8 +618,7 @@ export default function DecisionSummary() {
         </button>
         <a
           href={`/api/v1/graph/${projectId}/brief?format=pdf`}
-          target="_blank"
-          rel="noreferrer"
+          download
           className="flex-1 min-w-[180px] inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-lg bg-surface-700 text-text-secondary border border-surface-600 hover:bg-surface-600 transition-colors"
         >
           <Download className="w-3.5 h-3.5" aria-hidden="true" />

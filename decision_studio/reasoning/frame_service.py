@@ -1,3 +1,4 @@
+# DEAD-CODE-CANDIDATE DC-01 [module]: cannot even be imported (DecisionFrame model was removed in migration 016); nothing imports it. See docs/DEAD_CODE_REPORT.md
 """Reading and writing the decision frame."""
 
 from __future__ import annotations

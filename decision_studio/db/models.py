@@ -63,6 +63,28 @@ class Project(Base):
         comment="What decision the user is trying to make. Steers theory and "
                 "theory generation.",
     )
+    outside_view_recollection: Mapped[str | None] = mapped_column(
+        Text, nullable=True,
+        comment="The decider's own account of comparable past decisions and how "
+                "they went. Base rates are read from it (reference_case).",
+    )
+    sub_decisions: Mapped[list | None] = mapped_column(
+        JSON, nullable=True,
+        comment="Sub-decisions under an option, each with choices defined by existing "
+                "claims. See reasoning/sub_decisions.py.",
+    )
+    outcome_priorities: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True,
+        comment="Outcome key (Y1..) -> importance (critical, high, medium, low, none): "
+                "how much each success criterion matters to the decider. See "
+                "reasoning/decision_priorities.py. Never changes the graph.",
+    )
+    decision_anchor: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True,
+        comment="The decision in a form the pipeline can steer by: decision, "
+                "options, outcomes, deadline, constraints and whether the user "
+                "confirmed it. See reasoning/decision_anchor.py.",
+    )
 
     # Relationships
     claims: Mapped[list["Claim"]] = relationship(
@@ -146,9 +168,10 @@ class Claim(Base):
     )
     origin: Mapped[str] = mapped_column(
         String(10), default="ai", server_default="ai",
-        comment="ai or user. A user-authored claim is not blind re-scored: that "
-                "pass exists to correct a model scoring its own proposal, and a "
-                "human's own judgement is authoritative here by design.",
+        comment="ai, user or frame. A user-authored claim is not blind re-scored: "
+                "that pass exists to correct a model scoring its own proposal, and "
+                "a human's own judgement is authoritative here by design. 'frame' "
+                "marks an outcome node created from the decision anchor.",
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true",
@@ -158,6 +181,24 @@ class Claim(Base):
     user_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+    # --- Relation to the decision (see reasoning/decision_anchor.py) ---
+    # Scores, never filters. All null when the project has no anchor.
+    decision_role: Mapped[str | None] = mapped_column(
+        String(20), nullable=True,
+        comment="lever, contingency, mechanism, outcome or background. "
+                "'outcome' with origin 'frame' marks an anchor node.",
+    )
+    relevance: Mapped[float | None] = mapped_column(
+        Float, nullable=True,
+        comment="0-1, how directly this claim bears on the decision, as judged "
+                "by the model. Structural relevance is computed from the graph.",
+    )
+    relevance_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bears_on: Mapped[list | None] = mapped_column(
+        JSON, nullable=True,
+        comment="Anchor keys this claim affects, e.g. ['O1', 'Y2'].",
     )
 
     # Relationships
@@ -322,6 +363,14 @@ class Scenario(Base):
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     edge_overrides: Mapped[dict] = mapped_column(JSON, default=dict)
+    decision_case: Mapped[str | None] = mapped_column(
+        String(20), nullable=True,
+        comment="upside or downside: the decider's assumptions for that case of the "
+                "option comparison (reasoning/decision_scenarios.py). Null for forks.",
+    )
+    claim_overrides: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True, comment="Claim id -> prior, for decision cases.",
+    )
     injected_events: Mapped[list] = mapped_column(JSON, default=list)
     narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
     key_insights: Mapped[list | None] = mapped_column(JSON, nullable=True)
@@ -342,6 +391,7 @@ class Scenario(Base):
 # Three-Layer Causal Analysis Models
 # --------------------------------------------------------------------------
 
+# DEAD-CODE-CANDIDATE DC-30 [table]: written only by the deprecated DC-24 endpoints. Dropping it needs a migration. See docs/DEAD_CODE_REPORT.md
 class MultiLayerEvidence(Base):
     """Multi-layer causal evidence. Each row is one piece of evidence for a
     causal relationship produced by a specific layer/algorithm."""
@@ -444,6 +494,7 @@ class AdvisorMessage(Base):
     session: Mapped["AdvisorSession"] = relationship(back_populates="messages")
 
 
+# DEAD-CODE-CANDIDATE DC-30 [table]: written only by the deprecated DC-24 endpoints (the pipeline's statistical validator receives metric data in memory). Dropping it needs a migration. See docs/DEAD_CODE_REPORT.md
 class MetricSeries(Base):
     """Time-series metric data from CSV/Excel/screenshot uploads."""
 
@@ -639,16 +690,47 @@ class Theory(Base):
     outside_view_note: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="Which reference class was matched, and why."
     )
+    outside_view_case_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("reference_case.id", ondelete="SET NULL"),
+        nullable=True, comment="The reference case this theory was matched to.",
+    )
+    outside_view_polarity: Mapped[str | None] = mapped_column(
+        String(10), nullable=True,
+        comment="same: the theory predicts the reference case's outcome; "
+                "opposite: it predicts that outcome does not happen.",
+    )
     adjusted_score: Mapped[float | None] = mapped_column(
         Float, nullable=True,
         comment="confidence discounted by objection_load. This is what the panel "
                 "orders by; raw confidence remains visible.",
+    )
+    # --- Theory of value (see reasoning/theory_value.py) ---
+    option_key: Mapped[str | None] = mapped_column(
+        String(10), nullable=True,
+        comment="The anchor option this is a theory of (O1..), or null when it "
+                "explains the situation rather than a choice.",
+    )
+    predicted_effect: Mapped[str | None] = mapped_column(
+        String(20), nullable=True,
+        comment="achieves or threatens: what the chain predicts for the outcome "
+                "under that option.",
+    )
+    outcome_keys: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, comment="Anchor outcome keys (Y1..) the theory bears on.",
+    )
+    reaches_outcome: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false",
+        comment="Whether the validated causal chain contains an outcome node. "
+                "Computed from the graph, never taken from the model.",
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     claim_links: Mapped[list["TheoryClaim"]] = relationship(
         back_populates="theory", cascade="all, delete-orphan"
     )
+    #: Loaded with the theory so the comparison can be recomputed against the
+    #: decider's current conviction (reasoning/outside_view.current_comparison).
+    outside_view_case: Mapped["ReferenceCase | None"] = relationship(lazy="selectin")
     edge_links: Mapped[list["TheoryEdge"]] = relationship(
         back_populates="theory", cascade="all, delete-orphan"
     )
@@ -752,8 +834,98 @@ class TheoryTripwire(Base):
         String(20), default="pending",
         comment="pending, observed, not_observed or expired",
     )
+    decisiveness: Mapped[str | None] = mapped_column(
+        String(10), nullable=True,
+        comment="weak, moderate or decisive: how much the decider said in advance "
+                "this observation would count. Null reads as moderate.",
+    )
     observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     observed_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TheoryBelief(Base):
+    """The user's conviction in a theory: a stated prior, then evidence.
+
+    Conviction is the decider's own degree of belief, kept apart from the
+    model's confidence. It moves only through things observed in the world —
+    a tripwire, a field experiment, a tested link — each entered as a
+    likelihood ratio, so the arithmetic is Bayes' rule in odds form and the
+    history can be replayed. Never moved by a simulated experiment.
+
+    Keyed by ``theory_key``: a conviction is about the theory, and survives the
+    theory being regenerated into a new row.
+    """
+
+    __tablename__ = "theory_belief"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE")
+    )
+    theory_key: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    kind: Mapped[str] = mapped_column(String(20), comment="prior or evidence")
+    value: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="The stated probability, for a prior."
+    )
+    likelihood_ratio: Mapped[float | None] = mapped_column(
+        Float, nullable=True,
+        comment="P(observation | theory true) / P(observation | theory false), "
+                "for evidence.",
+    )
+    source: Mapped[str] = mapped_column(
+        String(30), comment="elicited, tripwire, field_experiment or link_hypothesis"
+    )
+    source_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    method: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, comment="lottery or direct, for a prior."
+    )
+    event: Mapped[str | None] = mapped_column(
+        String(200), nullable=True,
+        comment="The real-world event this observation came from. Observations "
+                "sharing an event count once: see theory_value.replay.",
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class LinkHypothesis(Base):
+    """A falsifiable hypothesis about one causal link in a theory's chain.
+
+    Links are ranked by value of information — how much the outcome's belief
+    depends on the link, times how unsure the graph is about it — so the test
+    proposed first is the one that would tell the most.
+    """
+
+    __tablename__ = "link_hypothesis"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE")
+    )
+    theory_key: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    theory_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("theory.id", ondelete="SET NULL"), nullable=True
+    )
+    edge_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("causal_edge.id", ondelete="CASCADE")
+    )
+    statement: Mapped[str] = mapped_column(Text)
+    refuted_if: Mapped[str] = mapped_column(Text, comment="What would prove the link wrong.")
+    cheapest_test: Mapped[str] = mapped_column(Text, default="", server_default="")
+    priority: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    leverage: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    uncertainty: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    status: Mapped[str] = mapped_column(
+        String(20), default="open", server_default="open",
+        comment="open, held, refuted or inconclusive",
+    )
+    decisiveness: Mapped[str | None] = mapped_column(
+        String(10), nullable=True,
+        comment="weak, moderate or decisive, stated before the test. Null reads as moderate.",
+    )
+    observed_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

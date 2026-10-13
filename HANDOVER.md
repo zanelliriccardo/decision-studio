@@ -267,9 +267,10 @@ finding: prefer the option robust to both. Supported outcome, not failure.
 
 `graph/stability.py` — 200 runs, per-edge σ = 0.12 scaled by `link_confidence`.
 
-`rank_stability()` reports `p_first` per option and a `decisive` flag: *"A wins
-in 52% of simulations"* rather than *"A wins"*. **The system contradicting its
-own output is the point.**
+`compare_options()` reports, per option, how often it came out higher than each
+other option on every success criterion and on the weighted view: *"higher in
+52% of simulations"* rather than *"A wins"*. **The system contradicting its own
+output is the point.** (It generalises the former `rank_stability`.)
 
 Comparisons use **selective common random numbers**: shared noise where the
 scenarios share edges, independent where they differ. Fully shared understates
@@ -534,6 +535,131 @@ Three switches: a per-browser preference (default on, including when
 localStorage is unreadable), a switch on the questions screen for the moment
 someone has had enough, and `INTAKE_ENABLED=false` for the operator.
 
+### 4.10 The decision anchor
+
+`project.decision_anchor` · `reasoning/decision_anchor.py` ·
+`reasoning/anchor_service.py` · `graph/anchoring.py` · migration 022
+
+**The problem.** The graph was built without the decision. Extraction was told
+to extract every claim, inference started from root causes and asked what each
+one caused, and `decision_objective` was first read by theory generation — after
+the graph existed. Claims described the documents; theories had to bridge from
+them to a choice nobody had shown the graph.
+
+**The shape of the fix** comes from Aristotle (Bocconi's theory-based decision
+tool): fix *what success looks like, by when, under which constraints* first,
+and treat a theory as a causal map from attributes to that success. The anchor
+is that problem statement in the smallest form that changes the graph:
+
+| Part | What it does |
+|---|---|
+| `decision` | One sentence, kept in step with `decision_objective` |
+| `options` O1..O4 | Claims name the options they bear on (`bears_on`). **Not graph nodes**: a choice has no probability, and mutually exclusive options in noisy-OR would assert a belief about which one the user picks |
+| `outcomes` Y1..Y3 | **Become graph nodes** (`origin='frame'`, `decision_role='outcome'`), so inference has a destination |
+| `deadline`, `constraints` | Rendered into prompts; nothing enforced yet |
+
+Drafted by the model from the objective and the material; never invented
+without an objective (no objective, no anchor, and the run is the one it always
+was). On the intake screen it is a pre-filled card that is drafted only when
+there are questions to show, and sent only if edited — it never stands between
+the user and the analysis.
+
+**What the pipeline does with it:**
+
+- **Extraction** sees the anchor and scores each claim: `decision_role` (lever,
+  contingency, mechanism, outcome, background — the theory-based view's
+  attributes), `relevance` 0-1 with a reason, and `bears_on`. **Scored, never
+  filtered** (§6 explains why). It may also extract an implication the text
+  clearly supports as an ASSUMPTION — the bridge claims that were missing.
+- **Outcome nodes** join after dedup, so an extracted claim restating a success
+  criterion is never merged into one.
+- **Inference** offers every outcome to every source, bypassing the similarity
+  filter: an outcome is phrased as a criterion and rarely shares vocabulary with
+  what drives it. Outcomes are never roots and never sources.
+- **The edge budget** sorts by strength × (0.5 + 0.5 × relevance) instead of
+  strength. Unscored claims weigh 1.0, which is the old ordering.
+- **Discovery** expands only edges on a path to an outcome, or between relevant
+  claims — all edges when nothing is anchored yet. New claims are scored.
+- **Theory context** ranks claims by relevance instead of word overlap with the
+  objective, always includes the outcomes, and asks each theory to end its chain
+  at one and name the option it favours.
+
+**Relevance has two sources, and the larger wins.** The model's per-claim score,
+and *structural* relevance from causal hops to the nearest outcome
+(`graph/anchoring.py`: 0 → 1.0, 1 → 0.85, 2 → 0.65, 3 → 0.45, further → 0.3,
+hand-chosen like everything in §10). Structure can only promote. A claim the
+model read as background (< 0.4) that sits on a path to an outcome is
+**peripheral** — the surprising factor the tool exists to surface — and the UI
+lists these separately. The **decision lens** (default view on anchored graphs)
+shows claims within three hops of an outcome, claims with relevance ≥ 0.5, and
+every peripheral claim. It is a view: the claims browser lists everything.
+
+**Editing afterwards costs a re-score, not a re-run.** `PUT
+/graph/{id}/decision-anchor` renames outcome nodes in place (links kept), adds
+new ones with incremental inference, deactivates removed ones (reversible), and
+re-scores every claim at one call per forty. Keys are never reissued — a deleted
+Y2's key would hand its node and links to a different outcome — so the service
+reserves every key the project has used. The same call anchors a project built
+before anchors existed.
+
+**Measuring it.** `python -m decision_studio.tools.anchor_report <project-id>`
+reports claims, components, the share that reaches an outcome, relevance
+distribution, peripheral count and how many theories reach an outcome. Run it on
+an old project, anchor that project from the summary page, run it again; then
+compare with a fresh anchored run.
+
+### 4.11 Theories of value
+
+`reasoning/theory_value.py` · `reasoning/link_tests.py` ·
+`graph/value_of_information.py` · `api/routes/theory_value.py` · migration 023
+
+The theory-based view (and Aristotle) treats a theory as a causal map from the
+attributes of a choice to success, held with a stated *conviction* that tests
+move. Three pieces make theories here work that way.
+
+**Option-bound theories.** Generation now asks for rival theories per option —
+the strongest case for and against each, never padding an option the graph is
+silent about. Each theory carries `option_key`, `predicted_effect` (achieves /
+threatens / unclear) and `outcome_keys`. Validation drops option keys the anchor
+does not have, and computes **`reaches_outcome` from the validated chain** — the
+model saying its theory reaches the decision is not evidence that it does.
+**Option coverage** (theory list, summary, recommendation prompt) shows an
+option no theory examines; the recommendation is told not to argue against an
+option the graph never looked at.
+
+**Conviction, apart from confidence.** `theory_belief` rows, keyed by
+`theory_key` so they survive regeneration: a *prior* the decider states, then
+*evidence* as likelihood ratios. Current conviction is replayed in odds form
+(`prior odds × Π LR`). Evidence counts only when recorded after the latest
+prior — restating after seeing a test already includes it. The prior is
+elicited by four lottery comparisons ("bet on the theory, or on a draw with a p
+chance?"), never a slider. Evidence comes from exactly three places:
+
+| Source | Default LR |
+|---|---|
+| Tripwire fired / not (`adversary.record_observation`) | falsifier: 0.25 / 1.5; confirmer: 4 / 0.67 |
+| Field experiment result (`experiments.record_field_result`, new) | supports 2, refutes 0.25, inconclusive 1 |
+| Tested link (`link_tests.record_result`) | held 2, refuted 0.25, inconclusive 1 |
+
+A synthetic experiment has no path to conviction, and nothing touches the
+model's `confidence`. Field results were previously designable but not
+recordable, so the README's "only a field experiment moves confidence" had no
+code behind it; it now moves conviction. A refuted link, like a fired
+falsifier, marks the theory stale.
+
+**Links worth testing.** Each chain link is scored by *leverage* (perturb its
+strength ±0.20, re-propagate, measure the chain destination's belief — the
+outcome node when reached) times *uncertainty* (`1 − link_confidence × (0.5 +
+0.5 × evidence)`). The top three become falsifiable hypotheses with a "wrong if"
+observation and the cheapest test. Leverage is typically small in absolute terms
+(propagation is damped), so the UI shows rank, not the product. Re-proposing
+replaces only open hypotheses; results are kept.
+
+Tripwire and field-test prompts now receive the anchor's outcomes, deadline and
+constraints — the `None` placeholders left by the removed questionnaire.
+
+Every default LR and weight above is hand-chosen and uncalibrated, like §10.
+
 ---
 
 ## 5. Bugs found and fixed
@@ -728,9 +854,73 @@ constant, and this system exposes what it cannot calibrate.
 - The summary page typed the graph response as `CausalGraph`, but the API returns
   `claims`, not `nodes` — `graph.nodes` was `undefined` and every read crashed.
 
+### 5.12 Near-duplicate removal pointed claims at the wrong rows
+
+`ClaimExtractor.embed_claims` drops claims above 0.95 similarity and then
+renumbered `order_index`. The orchestrator uses `order_index` to find each
+claim's already-saved row, so every claim after the first dropped duplicate
+received its neighbour's embedding, and the rows deleted as "duplicates" were
+the wrong ones. Chunks overlap by 1000 characters by design, so on long material
+a dropped duplicate is the normal case. `claim_dedup` documents the same trap and
+avoids it; `embed_claims` now leaves `order_index` alone too. Regression test in
+`tests/test_extraction_and_inference_anchor.py`.
+
+### 5.13 Intake context dropped for part of the graph
+
+Causal inference expands claims unreachable from the roots in a second pass,
+which omitted `extra_context`: those links were judged without the intake
+answers. Manual authoring's incremental inference passed no context at all. Both
+now receive the same context as the rest of the graph (anchor, then intake).
+
 ---
 
 ## 6. Known open issues
+
+### Decision view: intentional V1 limitations (canonical)
+
+Reviewed against the code; each is deliberate, consistent and disclosed where
+it is shown. See docs/DECISION_VIEW.md for the methods.
+
+1. **Weights are conventions.** Importance 8/4/2/1/0, robustness 80%/60%/2
+   points, impact and information bands, likelihood ratios by decisiveness — all
+   listed in §10, none calibrated, none presented as statistically derived.
+2. **Sensitivity is one input at a time.** No interaction effects; it explains
+   the gap between the two leading options on the weighted view only.
+   Robustness covers every pair on screen; the report shows robustness for the
+   leading pair only, to stay short.
+3. **Information priority concerns the leading pair.** Same drivers, same pair;
+   robustness still evaluates all pairs.
+4. **Root claims are what-ifs.** Their prior is moved a fixed ±20 points; the
+   Monte Carlo varies link strengths only, not priors. Labelled "what-if" in the
+   driver list and the method notes.
+5. **Robustness can reach 100%.** Options share most links and shared links
+   share their random draws, so common uncertainty cancels in the comparison.
+   "Higher in X% of simulations" is how often the ranking held, not a chance of
+   success; the screen and the report say so.
+6. **Mind-changers cover option-bound theories only.** Theories with no option,
+   or with an option but no clear predicted effect (achieves / threatens), are
+   not shown in "What would change my mind?": they bear on every option alike
+   or cannot be read for or against one.
+7. **Field tests take no decisiveness.** Their default ratios apply (equal to a
+   moderate link test).
+8. **Assumptions are existing claims.** No separate entity; a link's
+   uncertainty reaches the register through the claims at either end.
+9. **Document age is the publication date.** Evidence rows have no retrieval
+   date; documents without a publication date stay "undated".
+10. **The journal records what it saw.** Comparison states are journalled when
+    viewed; earlier states cannot be reconstructed and the entries say so.
+11. **Three scenarios.** Base, upside, downside. Automatic cases pick inputs by
+    one-at-a-time ranges and apply them together; each case is computed on a
+    copy of the graph, never stored as one.
+12. **Sub-decisions are one level deep.** Each is evaluated alone, with other
+    sub-decisions' claims as the map has them; no combinations across
+    sub-decisions.
+13. **No weighted view, no drivers.** With every criterion "not a factor", no
+    leader, drivers, information priority or automatic scenario is produced, and
+    the assumption register ranks by the model's relevance score (it says so).
+14. **Demo effects are small.** On the demo project drivers move the gap by 1–3
+    points and nothing flips the comparison; that is the finding, not a defect.
+
 
 Things I would look at, in order.
 
@@ -745,14 +935,15 @@ claim is logged individually, and the count reaches the UI: a filter that
 discards a fifth of the input silently is one nobody can check, and this one is
 a model's judgement about what counts as paperwork.
 
-The other half remains: the extraction prompt still says `Extract ALL claims
-present in the text` with no relevance criterion, and **never sees
-`decision_objective`**. Passing the objective and asking for a relevance score —
-a score rather than a filter, so nothing is lost and the threshold stays
-adjustable — is the remaining intervention. Note the risk: in a strategic
-decision the deciding factor is often the one nobody connected to the problem,
-so a hard relevance filter would discard exactly the thing the tool exists to
-surface.
+The other half is now addressed by the decision anchor (§4.10): extraction sees
+the decision and scores each claim for relevance — a score rather than a
+filter, so nothing is lost and the threshold stays adjustable. The risk that
+shaped it: in a strategic decision the deciding factor is often the one nobody
+connected to the problem, so a hard relevance filter would discard exactly the
+thing the tool exists to surface. Hence structural relevance and the
+"peripheral" list. Whether it reduces claim *volume* is not yet measured — the
+extraction prompt still extracts everything; what changes is what is shown,
+expanded and budgeted. Use `tools/anchor_report.py` on real material.
 
 **Claim dedup on contract material.** On one set of contract documents, dedup
 merged 710 of 1186 claims — a very high proportion, and the threshold (0.86) has
@@ -853,6 +1044,10 @@ TEST_DATABASE_URL=postgresql+asyncpg://decision_studio:decision_studio@localhost
 cd frontend && npm test
 ```
 
+`tests/` is listed in `.gitignore`, so most of the suite described here is not
+in the repository. The decision-anchor tests were added with `git add -f`; the
+entry is worth removing so tests are versioned by default.
+
 No test contacts an LLM or a search provider. `FakeLLMClient` replays canned
 structured output, so the suite runs without credentials and spends nothing.
 Without a reachable database, DB-backed tests skip and the rest still run.
@@ -916,6 +1111,31 @@ None is calibrated. Each is a starting point.
 | `MAX_FREE_TEXT_CHARS` | 2000 | orchestrator | Not for the INSERT — a 2000-char "time delay" crowds out prompts |
 | `MEANINGFUL_CHANGE_PX` | 1 | useResizeObserver | Below this, a resize is layout noise |
 | minimum connected links | 1 | validation | A categorical boundary, not a tuned fraction. A fraction does not discriminate on short chains and would add a constant without adding a distinction — see §5.10 |
+| Importance weights | 8 / 4 / 2 / 1 / 0 | decision_priorities | Critical / High / Medium / Low / Not a factor; unset = Medium. See docs/DECISION_VIEW.md |
+| `NEGLIGIBLE_DIFFERENCE` | 0.02 | decision_robustness | Below: no material difference between options on a criterion |
+| `ROBUST_SHARE` / `LEANING_SHARE` | 0.80 / 0.60 | decision_robustness | Share of runs for "robustly higher" / "sensitive"; below is unresolved |
+| `LINK_SPREAD_SIGMAS` | 2.0 | option_sensitivity | Plausible range of a link strength, in Monte Carlo sigmas |
+| `PRIOR_SPREAD` | 0.20 | option_sensitivity | Plausible range of a root claim's prior (a what-if) |
+| `FLIP_EPSILON` | 0.005 | option_sensitivity | A gap this close to zero counts as closed |
+| `MIN_REPORTED_IMPACT` | 0.005 | option_comparison | Drivers moving the gap less (and flipping nothing) are not shown |
+| `FULL_IMPACT_POINTS` | 20 | information_priority | A 20-point gap movement is full impact |
+| `MATERIAL_SHIFT` | 0.05 | assumptions | Gap movement for "could change the comparison" |
+| `ALL_OPTIONS_WEIGHT` | 0.25 | assumptions | Weight of an assumption that moves every option similarly |
+| `RECENT_DOCUMENT_DAYS` / `OLD_DOCUMENT_DAYS` | 365 / 1095 | evidence_quality | Recent / old document |
+| `RECENT_OBSERVATION_DAYS` | 90 | evidence_quality | Recent observation |
+| `DIRECT_RELEVANCE` | 0.7 | evidence_quality | Direct vs indirect document |
+| `MATERIAL_CONVICTION_SHIFT` / `MATERIAL_OUTCOME_SHIFT` | 0.10 / 0.05 | decision_timeline | Material journal events |
+| `AUTO_INPUTS` / `SCENARIO_RUNS` | 5 / 100 | decision_scenarios | Inputs in an automatic case; simulations per case |
+| `MIN_CHOICES` / `MAX_CHOICES` | 2 / 4 | sub_decisions | Choices per sub-decision |
+| `DECISIVE_SHARE` | 0.60 | stability | A leader best in fewer runs is not named |
+| Info-priority impact bands | high ≥ 10 pts, medium ≥ 3 pts (`HIGH`/`MEDIUM` = 0.50/0.15 of 20) | information_priority | Absolute gap movement |
+| Uncertainty bands | high ≥ 0.66, medium ≥ 0.33 | information_priority | `link_uncertainty` or `4p(1−p)` |
+| `RELEVANCE` | 1 / 0.75 / 0.5 | information_priority, assumptions | Can reverse / can close the gap / neither |
+| Tripwire LR by decisiveness | fired: ×2 / ×4 / ×10 for a confirmer, ÷ the same for a falsifier; not fired: ×1.2 / ×1.5 / ×1.5 for a falsifier, ÷ the same for a confirmer | theory_value | weak / moderate / decisive; moderate = the former fixed value |
+| Link-test LR by decisiveness | held 1.5 / 2 / 3, refuted 0.5 / 0.25 / 0.1, inconclusive 1 | link_tests | weak / moderate / decisive |
+| `DEFAULT_FIELD_LR` | supports 2, refutes 0.25, inconclusive 1 | experiments | Field tests take no decisiveness (see limitations) |
+| `MIN_OPEN_QUESTION` / off-target factor | 0.25 / 0.5 | mind_changers | Ranking of mind-changing signals |
+| `MAX_DRIVERS` / `MAX_ASSUMPTIONS` / info items | 5 / 8 / 5 | option_comparison, assumptions, information_priority | Shown per view |
 
 ---
 

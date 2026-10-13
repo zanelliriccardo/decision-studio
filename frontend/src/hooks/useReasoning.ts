@@ -151,9 +151,8 @@ export function useReasoning(projectId: string | null) {
         await api.addEdge(
           projectId, sourceClaimId, targetClaimId, mechanism, effect, linkConfidence,
         )
-        // Pure computation, so it is free and always safe: one new link changes
-        // topology and every downstream belief.
-        await api.recompute(projectId)
+        // Beliefs are not recomputed here: the caller reloads the graph, and
+        // every graph read propagates the whole graph afresh.
         await Promise.all([loadTheories(), loadDebates()])
         toast.success(t.authoring.linkCreated)
         return true
@@ -190,7 +189,7 @@ export function useReasoning(projectId: string | null) {
           }
         }
 
-        await api.recompute(projectId)
+        // No recompute call: the caller reloads the graph, which propagates it.
         await Promise.all([loadTheories(), loadDebates()])
         if (linksInferred) toast.success(t.authoring.claimCreated)
         return true

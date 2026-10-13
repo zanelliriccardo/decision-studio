@@ -4,6 +4,7 @@ import { apiPost, apiGet } from '../lib/api/client.ts'
 import { useAnalysis } from '../context/AnalysisContext.tsx'
 import { useT } from '../i18n/index.tsx'
 import { computeVisibleNodes, findTopPaths } from '../lib/graph/focusCompute.ts'
+import { anchorNodeFields, toAnchor } from '../lib/decisionAnchor.ts'
 import type {
   ApiGraphOperationResult,
   ApiChallengeResult,
@@ -30,12 +31,15 @@ export function transformApiGraph(api: Record<string, unknown>): CausalGraph {
     sourceSentence: (n.source_sentence as string) ?? null,
     beliefLow: (n.belief_low as number) ?? null,
     beliefHigh: (n.belief_high as number) ?? null,
+    beliefIfDependent: (n.belief_if_dependent as number) ?? null,
+    sharedCauses: (n.shared_causes as string[]) ?? [],
     reviewStatus: ((n.review_status as string) ?? 'accepted') as CausalGraph['nodes'][0]['reviewStatus'],
     isActive: (n.is_active as boolean) ?? true,
     userNote: (n.user_note as string) ?? null,
     prior: (n.prior as number) ?? (n.confidence as number),
     corroboratedBy: (n.corroborated_by as string[]) ?? null,
     duplicateCount: (n.duplicate_count as number) ?? 0,
+    ...anchorNodeFields(n),
   })) ?? []
 
   const edges = (api.edges as Array<Record<string, unknown>>)?.map((e) => ({
@@ -66,6 +70,7 @@ export function transformApiGraph(api: Record<string, unknown>): CausalGraph {
       relevanceScore: ev.relevance_score as number,
       credibilityScore: ev.credibility_score as number,
       sourceTier: (ev.source_tier as number) ?? 4,
+      quality: (ev.quality as NonNullable<CausalGraph['edges'][0]['evidences'][0]['quality']>) ?? [],
     })),
     reviewStatus: ((e.review_status as string) ?? 'accepted') as CausalGraph['edges'][0]['reviewStatus'],
     isActive: (e.is_active as boolean) ?? true,
@@ -88,6 +93,7 @@ export function transformApiGraph(api: Record<string, unknown>): CausalGraph {
     hasTemporal: (api.has_temporal as boolean) ?? true,
     graphRevision: (api.graph_revision as number) ?? 1,
     decisionObjective: (api.decision_objective as string) ?? null,
+    decisionAnchor: toAnchor(api.decision_anchor),
   }
 }
 

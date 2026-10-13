@@ -34,6 +34,8 @@ THEORY_STATUSES: tuple[str, ...] = (
 )
 GENERATED_THEORY_STATUSES: tuple[str, ...] = THEORY_STATUSES[:-1]
 BUSINESS_IMPACTS: tuple[str, ...] = ("low", "medium", "high", "critical")
+#: What a theory of value predicts for the outcome under its option.
+PREDICTED_EFFECTS: tuple[str, ...] = ("achieves", "threatens", "unclear")
 ANSWER_TYPES: tuple[str, ...] = (
     "free_text",
     "single_choice",
@@ -107,6 +109,12 @@ class ValidatedTheory:
     cited_links: int = 0
     previous_theory_key: str | None = None
     change_explanation: str | None = None
+    # --- Theory of value ---
+    option_key: str | None = None
+    predicted_effect: str = "unclear"
+    outcome_keys: list[str] = field(default_factory=list)
+    #: Computed from the chain, never taken from the model.
+    reaches_outcome: bool = False
 
 
 @dataclass
@@ -215,8 +223,14 @@ def validate_theories(
     snapshot: GraphSnapshot,
     *,
     known_theory_keys: set[str] | None = None,
+    anchor: dict[str, Any] | None = None,
 ) -> tuple[list[ValidatedTheory], ValidationReport]:
     """Validate a raw theory-generation payload against the graph snapshot.
+
+    With a decision anchor, each theory's option and outcome keys are checked
+    against it, and whether the chain reaches an outcome is computed from the
+    validated chain — a model saying its theory reaches the decision is not
+    evidence that it does.
 
     A theory is dropped when it has no title/summary, or when it retains no
     supporting claims *and* no supporting edges after reference resolution —
@@ -370,6 +384,10 @@ def validate_theories(
             if str(item).strip()
         ]
 
+        option_key, effect, outcome_keys, reaches = _theory_of_value(
+            raw, chain, snapshot, anchor, report, index
+        )
+
         validated.append(
             ValidatedTheory(
                 title=title[:500],
@@ -388,12 +406,75 @@ def validate_theories(
                 cited_links=cited_links,
                 previous_theory_key=previous_key,
                 change_explanation=(raw.get("change_explanation") or "").strip() or None,
+                option_key=option_key,
+                predicted_effect=effect,
+                outcome_keys=outcome_keys,
+                reaches_outcome=reaches,
             )
         )
 
     deduped = _drop_duplicate_theories(validated, report)
     report.accepted = len(deduped)
     return deduped, report
+
+
+def _outcome_key(claim: Any) -> str | None:
+    """The anchor key of an outcome node, or None for any other claim."""
+    if getattr(claim, "origin", None) != "frame" or getattr(claim, "decision_role", None) != "outcome":
+        return None
+    return (getattr(claim, "metadata_", None) or {}).get("anchor_key") or ""
+
+
+def _theory_of_value(
+    raw: dict[str, Any],
+    chain: list[dict[str, Any]],
+    snapshot: GraphSnapshot,
+    anchor: dict[str, Any] | None,
+    report: ValidationReport,
+    index: int,
+) -> tuple[str | None, str, list[str], bool]:
+    """The option a theory is about, its predicted effect, and whether it arrives.
+
+    Returns ``(option_key, predicted_effect, outcome_keys, reaches_outcome)``.
+
+    * An option key the anchor does not have is dropped — a theory of O5 on a
+      three-option decision is a theory of an option nobody is considering.
+    * Outcome keys are the model's, filtered to the anchor, plus every outcome
+      the chain actually reaches: arriving at an outcome node is the strongest
+      statement of what the theory is about.
+    * ``reaches_outcome`` looks only at the validated chain. The supporting
+      claims are not enough; a theory can cite an outcome without any link
+      leading to it.
+    """
+    option_keys = {o["key"] for o in (anchor or {}).get("options", [])}
+    anchor_outcomes = {o["key"] for o in (anchor or {}).get("outcomes", [])}
+
+    option_key = (raw.get("option_key") or "").strip().upper() or None
+    if option_key and option_key not in option_keys:
+        report.repaired.append({"index": index, "field": "option_key", "value": None})
+        option_key = None
+
+    effect, repaired = normalize_enum(raw.get("predicted_effect"), PREDICTED_EFFECTS, "unclear")
+    if repaired:
+        report.repaired.append({"index": index, "field": "predicted_effect", "value": effect})
+
+    chain_claims: list[str] = []
+    for step in chain:
+        for key in ("claim_id", "source_claim_id", "target_claim_id"):
+            if step.get(key):
+                chain_claims.append(step[key])
+    reached = [
+        key for key in (
+            _outcome_key(snapshot.claims_by_id.get(cid)) for cid in chain_claims
+        ) if key is not None
+    ]
+
+    stated = [
+        str(k).strip().upper() for k in (raw.get("outcome_keys") or [])
+        if str(k).strip().upper() in anchor_outcomes
+    ]
+    outcome_keys = sorted({*stated, *(k for k in reached if k)})
+    return option_key, effect, outcome_keys, bool(reached)
 
 
 def _build_chain(

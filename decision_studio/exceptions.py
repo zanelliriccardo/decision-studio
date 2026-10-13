@@ -14,5 +14,6 @@ class DAGError(DecisionStudioError):
     """Raised when graph construction or validation fails."""
 
 
+# DEAD-CODE-CANDIDATE DC-14: never raised or caught. See docs/DEAD_CODE_REPORT.md
 class ValidationError(DecisionStudioError):
     """Raised when input validation fails."""

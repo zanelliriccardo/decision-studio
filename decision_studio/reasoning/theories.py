@@ -25,12 +25,14 @@ from sqlalchemy.orm import selectinload
 
 from decision_studio.config import settings
 from decision_studio.db.models import (
+    Experiment,
     Project,
     Theory,
     TheoryClaim,
     TheoryEdge,
     TheoryEvidence,
     TheoryRevision,
+    TheoryTripwire,
 )
 from decision_studio.llm.client import LLMClient, get_llm_client
 from decision_studio.llm.prompts import language_instruction
@@ -39,6 +41,7 @@ from decision_studio.llm.prompts.theory_generation import (
     THEORY_GENERATION_SYSTEM,
 )
 from decision_studio.reasoning.context_builder import build_generation_context
+from decision_studio.reasoning.decision_anchor import normalise_anchor
 from decision_studio.reasoning.effective_graph import load_effective_snapshot
 from decision_studio.reasoning.decision_context import (
     decision_objective,
@@ -99,16 +102,27 @@ async def list_current_theories(
         .options(*_theory_loader_options())
     )
     theories = list(result.scalars().all())
-    impact_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    # Ordered by adjusted_score, not raw confidence: an adversarial objection
-    # that changes no ranking is decoration. Raw confidence stays visible.
-    theories.sort(
-        key=lambda t: (
-            impact_rank.get(t.business_impact, 4),
-            -(t.adjusted_score if t.adjusted_score is not None else (t.confidence or 0.0)),
-        )
-    )
+    theories.sort(key=lambda t: rank_key(t, None))
     return theories
+
+
+def rank_key(theory: Theory, conviction: float | None) -> tuple:
+    """Order theories by what the analysis measured, strongest first.
+
+    1. Whether the causal chain verifiably reaches a success criterion
+       (computed from the graph): a theory that never reaches the decision is
+       context, however well argued.
+    2. Up to date before out of date.
+    3. Support: the decider's conviction once stated (the only number moved by
+       observations), otherwise the objection-discounted score.
+
+    The model's own ``business_impact`` label is deliberately not a key: it was
+    the model grading its own theory, and it used to outrank everything.
+    """
+    support = conviction
+    if support is None:
+        support = theory.adjusted_score if theory.adjusted_score is not None else (theory.confidence or 0.0)
+    return (not bool(getattr(theory, "reaches_outcome", False)), bool(theory.is_stale), -support)
 
 
 async def get_theory(
@@ -160,6 +174,26 @@ async def _next_revision_number(session: AsyncSession, project_id: UUID) -> int:
     return (latest or 0) + 1
 
 
+def _same_claim(candidate: ValidatedTheory, previous: Theory) -> bool:
+    """Whether two versions make the same claim about the decision.
+
+    A theory key carries the decider's conviction and every test result. If a
+    theory about O1 "achieving" the outcome were matched to a regenerated one
+    about O1 "threatening" it — the same links read the other way — the
+    conviction stated for the first would silently transfer to its opposite.
+    Unknown values on either side (theories from before options existed) do
+    not block a match.
+    """
+    for field in ("option_key", "predicted_effect"):
+        before = getattr(previous, field, None)
+        after = getattr(candidate, field, None)
+        if field == "predicted_effect" and "unclear" in (before, after):
+            continue
+        if before is not None and after is not None and before != after:
+            return False
+    return True
+
+
 def match_previous(
     candidate: ValidatedTheory,
     previous: list[Theory],
@@ -171,6 +205,7 @@ def match_previous(
             if (
                 str(theory.theory_key) == candidate.previous_theory_key
                 and str(theory.theory_key) not in used_keys
+                and _same_claim(candidate, theory)
             ):
                 return theory
 
@@ -181,7 +216,7 @@ def match_previous(
     best: Theory | None = None
     best_overlap = 0.0
     for theory in previous:
-        if str(theory.theory_key) in used_keys:
+        if str(theory.theory_key) in used_keys or not _same_claim(candidate, theory):
             continue
         prior_edges = {str(link.edge_id) for link in theory.edge_links}
         if not prior_edges:
@@ -221,6 +256,13 @@ def describe_change(
         )
     if candidate.recommendation.strip() != (previous.recommendation or "").strip():
         reasons.append("the recommended action changed")
+    if (candidate.option_key, candidate.predicted_effect) != (
+        getattr(previous, "option_key", None), getattr(previous, "predicted_effect", None)
+    ) and (candidate.option_key or getattr(previous, "option_key", None)):
+        reasons.append(
+            f"it now argues that {candidate.option_key or 'no specific option'} "
+            f"{candidate.predicted_effect} the outcome"
+        )
 
     prior_edges = {str(link.edge_id) for link in previous.edge_links}
     new_edges = set(candidate.supporting_edge_ids)
@@ -286,6 +328,10 @@ def _persist_theory(
         generation_id=generation_id,
         # Until the adversary runs, nothing has been objected to.
         adjusted_score=candidate.confidence,
+        option_key=candidate.option_key,
+        predicted_effect=candidate.predicted_effect,
+        outcome_keys=candidate.outcome_keys or None,
+        reaches_outcome=candidate.reaches_outcome,
     )
     session.add(theory)
     theory.claim_links = [
@@ -326,8 +372,10 @@ async def generate_theories(
     """
     # Existence first: an unknown project is a 404, not an invitation to fill
     # in a questionnaire for something that does not exist.
-    if await session.get(Project, project_id) is None:
+    project = await session.get(Project, project_id)
+    if project is None:
         raise LookupError(f"Project {project_id} not found")
+    anchor = normalise_anchor(getattr(project, "decision_anchor", None))
 
     objective = await decision_objective(session, project_id)
 
@@ -388,7 +436,7 @@ async def generate_theories(
 
     known_keys = {str(t.theory_key) for t in previous}
     candidates, report = validate_theories(
-        payload, context.refs, snapshot, known_theory_keys=known_keys
+        payload, context.refs, snapshot, known_theory_keys=known_keys, anchor=anchor
     )
     logger.info(
         "Theory generation %s validation: accepted=%d dropped=%d repaired=%d "
@@ -452,6 +500,34 @@ async def generate_theories(
         key_to_theory[str(theory_key)] = theory
 
     await session.flush()
+
+    # Commitments follow the theory, not the row. A pending tripwire is what the
+    # decider said would change their mind, and a field test may be running;
+    # leaving them on the retired version made both vanish from view on every
+    # regeneration. Observed tripwires stay with the version they judged.
+    for candidate, previous_theory in matches:
+        if previous_theory is None:
+            continue
+        successor = key_to_theory[str(previous_theory.theory_key)]
+        await session.execute(
+            update(TheoryTripwire)
+            .where(
+                TheoryTripwire.theory_id == previous_theory.id,
+                TheoryTripwire.status == "pending",
+            )
+            .values(theory_id=successor.id)
+        )
+        await session.execute(
+            update(Experiment)
+            .where(Experiment.theory_id == previous_theory.id, Experiment.kind == "field")
+            .values(theory_id=successor.id)
+        )
+        # Same option, same predicted effect (see _same_claim), so the match
+        # against the decider's comparable cases still holds, polarity included.
+        successor.outside_view_case = previous_theory.outside_view_case
+        successor.outside_view_polarity = previous_theory.outside_view_polarity
+        successor.outside_view_delta = previous_theory.outside_view_delta
+        successor.outside_view_note = previous_theory.outside_view_note
 
     # Retire previous versions, and mark genuinely dropped theories superseded.
     for previous_theory in previous:

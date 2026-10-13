@@ -21,6 +21,9 @@ from decision_studio.api.models.reasoning import (
     AdversaryReport,
     CausalChainStep,
     ChangeSummary,
+    DecisionAnchor,
+    DecisionAnchorResponse,
+    DecisionAnchorSaveResponse,
     DecisionObjectiveRequest,
     GenerateTheoriesRequest,
     GraphOperationListResponse,
@@ -38,6 +41,8 @@ from decision_studio.api.models.reasoning import (
     ExperimentListResponse,
     ExperimentResponse_,
     InferLinksResponse,
+    DecisivenessRequest,
+    OutsideViewRequest,
     OutsideViewResponse,
     PersonaResponse,
     RecomputePlanResponse,
@@ -69,6 +74,7 @@ from decision_studio.db.models import (
 from decision_studio.db.session import get_session
 from decision_studio.exceptions import LLMError
 from decision_studio.reasoning import adversary as adversary_service
+from decision_studio.reasoning import anchor_service
 from decision_studio.reasoning import authoring as authoring_service
 from decision_studio.reasoning import brief as brief_service
 from decision_studio.reasoning import debate_service
@@ -77,7 +83,9 @@ from decision_studio.reasoning import experiments as experiment_service
 from decision_studio.reasoning import outside_view as outside_view_service
 from decision_studio.reasoning import review as review_service
 from decision_studio.reasoning import theories as theory_service
+from decision_studio.reasoning import theory_value
 from decision_studio.reasoning.calibration import band
+from decision_studio.reasoning.decision_anchor import normalise_anchor
 from decision_studio.reasoning.effective_graph import is_claim_effective, is_edge_effective
 from decision_studio.reasoning.review import ReviewChange, ReviewError
 
@@ -135,6 +143,7 @@ def _theory_response(
     theory: Theory,
     objections: list[ObjectionResponse] | None = None,
     tripwires: list[TripwireResponse] | None = None,
+    conviction: theory_value.Conviction | None = None,
 ) -> TheoryResponse:
     """Map a theory to its response shape, with objections and tripwires."""
     supporting_ev = [
@@ -158,6 +167,11 @@ def _theory_response(
             **step, gap_before=is_claim and previous_was_claim
         ))
         previous_was_claim = is_claim
+    # Recomputed on every read: the comparison is against the decider's
+    # conviction, which moves with every observation.
+    outside_delta, outside_note = outside_view_service.current_comparison(
+        theory, conviction.current if conviction else None
+    )
     return TheoryResponse(
         id=theory.id,
         project_id=theory.project_id,
@@ -191,8 +205,14 @@ def _theory_response(
         adjusted_score=theory.adjusted_score,
         objections=objections or [],
         tripwires=tripwires or [],
-        outside_view_delta=theory.outside_view_delta,
-        outside_view_note=theory.outside_view_note,
+        outside_view_delta=outside_delta,
+        outside_view_note=outside_note,
+        option_key=getattr(theory, "option_key", None),
+        predicted_effect=getattr(theory, "predicted_effect", None),
+        outcome_keys=list(getattr(theory, "outcome_keys", None) or []),
+        reaches_outcome=bool(getattr(theory, "reaches_outcome", False)),
+        conviction=conviction.current if conviction else None,
+        conviction_prior=conviction.prior if conviction else None,
         confidence_band=band(theory.confidence),
         is_stale=theory.is_stale,
         stale_reason=theory.stale_reason,
@@ -248,6 +268,7 @@ async def _tripwires_by_theory(
                 status=row.status,
                 observed_at=row.observed_at,
                 observed_note=row.observed_note,
+                decisiveness=row.decisiveness or "moderate",
             )
         )
     return mapping
@@ -459,8 +480,74 @@ async def set_decision_objective(
     """
     project = await _require_project(project_id, session)
     project.decision_objective = req.decision_objective.strip() or None
+    # The anchor restates the objective; keep the two saying the same thing.
+    # Options and outcomes are left alone — re-drafting them would discard
+    # the user's corrections because a sentence was reworded.
+    anchor = normalise_anchor(project.decision_anchor)
+    if anchor is not None and project.decision_objective:
+        project.decision_anchor = {**anchor, "decision": project.decision_objective}
     await session.commit()
     return await get_graph_revision(project_id, session)
+
+
+# ---------------------------------------------------------------------------
+# Decision anchor
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/graph/{project_id}/decision-anchor", response_model=DecisionAnchorResponse
+)
+async def get_decision_anchor(
+    project_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> DecisionAnchorResponse:
+    """The project's decision anchor, or null when it has none."""
+    await _require_project(project_id, session)
+    anchor = await anchor_service.get_anchor(session, project_id)
+    return DecisionAnchorResponse(project_id=project_id, anchor=anchor)
+
+
+@router.post(
+    "/graph/{project_id}/decision-anchor/draft", response_model=DecisionAnchorResponse
+)
+async def draft_decision_anchor(
+    project_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> DecisionAnchorResponse:
+    """Draft an anchor from the stated objective and the material.
+
+    Null without an objective, and on any model failure: the anchor improves a
+    run that can proceed without it. Never overwrites a confirmed anchor.
+    """
+    await _require_project(project_id, session)
+    anchor = await anchor_service.draft_for_project(session, project_id)
+    return DecisionAnchorResponse(project_id=project_id, anchor=anchor)
+
+
+@router.put(
+    "/graph/{project_id}/decision-anchor", response_model=DecisionAnchorSaveResponse
+)
+async def save_decision_anchor(
+    project_id: UUID,
+    req: DecisionAnchor,
+    session: AsyncSession = Depends(get_session),
+) -> DecisionAnchorSaveResponse:
+    """Save a confirmed anchor.
+
+    When the graph already exists, outcome nodes are synchronised and every
+    claim is re-scored against the new anchor — without re-running the pipeline.
+    """
+    await _require_project(project_id, session)
+    try:
+        result = await anchor_service.save_anchor(
+            session, project_id, req.model_dump()
+        )
+    except anchor_service.AnchorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return DecisionAnchorSaveResponse(
+        project_id=project_id, anchor=result["anchor"], report=result["report"]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +581,12 @@ async def _generate(
         ) from exc
     objection_map = await _objections_by_theory(session, project_id)
     tripwire_map = await _tripwires_by_theory(session, project_id)
+    conviction_map = await theory_value.convictions(
+        session, project_id, [t.theory_key for t in result.theories]
+    )
+    ordered = sorted(result.theories, key=lambda t: theory_service.rank_key(
+        t, getattr(conviction_map.get(str(t.theory_key)), "current", None)
+    ))
     return TheoryGenerationResponse(
         graph_revision=result.revision.graph_revision,
         theory_revision=result.revision.revision,
@@ -502,8 +595,9 @@ async def _generate(
                 t,
                 objection_map.get(t.id, []),
                 tripwire_map.get(t.id, []),
+                conviction_map.get(str(t.theory_key)),
             )
-            for t in result.theories
+            for t in ordered
         ],
         change_summary=ChangeSummary(**result.change_summary),
         validation=result.validation,
@@ -543,23 +637,33 @@ async def list_theories(
     project_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> TheoryListResponse:
-    """Current theories, ordered by business impact then confidence."""
+    """Current theories, strongest first (see theories.rank_key)."""
     project = await _require_project(project_id, session)
     theories = await theory_service.list_current_theories(session, project_id)
     objection_map = await _objections_by_theory(session, project_id)
     tripwire_map = await _tripwires_by_theory(session, project_id)
+    conviction_map = await theory_value.convictions(
+        session, project_id, [t.theory_key for t in theories]
+    )
+    theories.sort(key=lambda t: theory_service.rank_key(
+        t, getattr(conviction_map.get(str(t.theory_key)), "current", None)
+    ))
     return TheoryListResponse(
         theories=[
             _theory_response(
                 t,
                 objection_map.get(t.id, []),
                 tripwire_map.get(t.id, []),
+                conviction_map.get(str(t.theory_key)),
             )
             for t in theories
         ],
         graph_revision=project.graph_revision or 1,
         theory_revision=theories[0].theory_revision if theories else None,
         stale_count=sum(1 for t in theories if t.is_stale),
+        option_coverage=theory_value.option_coverage(
+            normalise_anchor(project.decision_anchor), theories
+        ),
     )
 
 
@@ -627,10 +731,12 @@ async def get_theory(
         raise HTTPException(status_code=404, detail="Theory not found")
     objection_map = await _objections_by_theory(session, project_id)
     tripwire_map = await _tripwires_by_theory(session, project_id)
+    conviction_map = await theory_value.convictions(session, project_id, [theory.theory_key])
     return _theory_response(
         theory,
         objection_map.get(theory.id, []),
         tripwire_map.get(theory.id, []),
+        conviction_map.get(str(theory.theory_key)),
     )
 
 
@@ -707,7 +813,8 @@ async def observe_tripwire(
     await _require_project(project_id, session)
     try:
         row = await adversary_service.record_observation(
-            session, project_id, tripwire_id, observed=req.observed, note=req.note
+            session, project_id, tripwire_id, observed=req.observed, note=req.note,
+            likelihood_ratio=req.likelihood_ratio, event=req.event,
         )
     except LookupError as exc:
         await session.rollback()
@@ -721,6 +828,35 @@ async def observe_tripwire(
         status=row.status,
         observed_at=row.observed_at,
         observed_note=row.observed_note,
+        decisiveness=row.decisiveness or "moderate",
+    )
+
+
+@router.patch(
+    "/graph/{project_id}/tripwires/{tripwire_id}/decisiveness",
+    response_model=TripwireResponse,
+)
+async def set_tripwire_decisiveness(
+    project_id: UUID,
+    tripwire_id: UUID,
+    req: DecisivenessRequest,
+    session: AsyncSession = Depends(get_session),
+) -> TripwireResponse:
+    """How much this tripwire would count. Only while it is still pending."""
+    await _require_project(project_id, session)
+    try:
+        row = await adversary_service.set_tripwire_decisiveness(
+            session, project_id, tripwire_id, req.decisiveness
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return TripwireResponse(
+        id=row.id, observable=row.observable, direction=row.direction,
+        horizon_days=row.horizon_days, check_by=row.check_by, status=row.status,
+        observed_at=row.observed_at, observed_note=row.observed_note,
+        decisiveness=row.decisiveness or "moderate",
     )
 
 
@@ -774,19 +910,34 @@ async def dismiss_objection(
 # ---------------------------------------------------------------------------
 
 
+def _case_response(c) -> ReferenceCaseResponse:
+    return ReferenceCaseResponse(
+        id=c.id,
+        outcome=c.outcome,
+        cases_total=c.cases_total,
+        cases_with_outcome=c.cases_with_outcome,
+        base_rate=c.base_rate,
+        basis=c.basis,
+        source=c.source,
+    )
+
+
 @router.post("/graph/{project_id}/outside-view", response_model=OutsideViewResponse)
 async def run_outside_view(
     project_id: UUID,
+    req: OutsideViewRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> OutsideViewResponse:
-    """Extract base rates from the user's recollection and check theories against them.
+    """Read base rates from the decider's recollection and check theories against them.
 
     The inside view is what the uploaded documents describe. This is the only
     outside view a one-off decision has, and it is usually the better predictor.
     """
-    await _require_project(project_id, session)
+    project = await _require_project(project_id, session)
     try:
-        cases = await outside_view_service.extract_reference_cases(session, project_id)
+        cases = await outside_view_service.extract_reference_cases(
+            session, project_id, req.recollection if req else None
+        )
         report = await outside_view_service.check_theories_against_base_rates(
             session, project_id
         )
@@ -795,19 +946,10 @@ async def run_outside_view(
         logger.exception("Outside view failed for project %s", project_id)
         raise HTTPException(status_code=502, detail=f"Outside view failed: {exc}") from exc
 
+    await session.refresh(project)
     return OutsideViewResponse(
-        cases=[
-            ReferenceCaseResponse(
-                id=c.id,
-                outcome=c.outcome,
-                cases_total=c.cases_total,
-                cases_with_outcome=c.cases_with_outcome,
-                base_rate=c.base_rate,
-                basis=c.basis,
-                source=c.source,
-            )
-            for c in cases
-        ],
+        recollection=project.outside_view_recollection,
+        cases=[_case_response(c) for c in cases],
         checked=report["checked"],
         diverging=report["diverging"],
     )
@@ -818,22 +960,12 @@ async def get_outside_view(
     project_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> OutsideViewResponse:
-    """Base rates already extracted for this project."""
-    await _require_project(project_id, session)
+    """The decider's recollection and the base rates read from it."""
+    project = await _require_project(project_id, session)
     cases = await outside_view_service.list_reference_cases(session, project_id)
     return OutsideViewResponse(
-        cases=[
-            ReferenceCaseResponse(
-                id=c.id,
-                outcome=c.outcome,
-                cases_total=c.cases_total,
-                cases_with_outcome=c.cases_with_outcome,
-                base_rate=c.base_rate,
-                basis=c.basis,
-                source=c.source,
-            )
-            for c in cases
-        ]
+        recollection=project.outside_view_recollection,
+        cases=[_case_response(c) for c in cases],
     )
 
 
@@ -886,6 +1018,7 @@ def _experiment_response(experiment) -> ExperimentResponse_:
     )
 
 
+# DEAD-CODE-CANDIDATE DC-28: synthetic experiments: no frontend caller (design + execute). Decide: wire into the theory panel or remove. See docs/DEAD_CODE_REPORT.md
 @router.post(
     "/graph/{project_id}/theories/{theory_id}/experiments/synthetic",
     response_model=ExperimentResponse_,
@@ -914,6 +1047,7 @@ async def design_synthetic_experiment(
     return _experiment_response(experiment)
 
 
+# DEAD-CODE-CANDIDATE DC-28: synthetic experiments: no frontend caller (design + execute). Decide: wire into the theory panel or remove. See docs/DEAD_CODE_REPORT.md
 @router.post(
     "/graph/{project_id}/experiments/{experiment_id}/execute",
     response_model=ExperimentResponse_,
@@ -1206,6 +1340,7 @@ async def promote_discriminator(
             id=t.id, observable=t.observable, direction=t.direction,
             horizon_days=t.horizon_days, check_by=t.check_by, status=t.status,
             observed_at=t.observed_at, observed_note=t.observed_note,
+            decisiveness=t.decisiveness or "moderate",
         )
         for t in tripwires
     ]

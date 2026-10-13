@@ -161,6 +161,13 @@ export default function GraphLegend() {
             </svg>
             <span className="text-xs text-text-secondary">{leg.convergence}</span>
           </span>
+          <span className="inline-flex items-center gap-2">
+            <svg width={18} height={16} className="shrink-0">
+              <rect x={1} y={1} width={16} height={14} rx={3} fill="none" stroke="#f59e0b" strokeWidth={2} />
+              <text x={9} y={11} textAnchor="middle" fill="#f59e0b" fontSize={8} fontWeight="bold">{'\u25CE'}</text>
+            </svg>
+            <span className="text-xs text-text-secondary">{t.anchor.legendOutcome}</span>
+          </span>
         </Section>
 
         {/* C. Edge Color (Evidence Score) */}

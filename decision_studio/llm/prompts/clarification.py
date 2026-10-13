@@ -1,3 +1,4 @@
+# DEAD-CODE-CANDIDATE DC-06 [module]: prompt for DC-05 only. See docs/DEAD_CODE_REPORT.md
 """Prompt and JSON schema for AI clarification questions.
 
 Same convention as the other prompt modules: ``*_SYSTEM`` + strict ``*_SCHEMA``

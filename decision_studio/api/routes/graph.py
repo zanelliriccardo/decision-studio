@@ -27,11 +27,25 @@ from decision_studio.api.models.graph import (
 from decision_studio.db.models import CausalEdge, Claim, Project
 from decision_studio.pipeline.evidence_grounder import EvidenceGrounder
 from decision_studio.db.session import async_session, get_session
+from decision_studio.graph.anchoring import (
+    anchor_distances,
+    effective_relevance,
+    in_lens,
+    is_peripheral,
+)
 from decision_studio.graph.belief_propagation import propagate_beliefs
+from decision_studio.graph.shared_causes import dependence_report
+from decision_studio.reasoning.evidence_quality import document_labels
 from decision_studio.graph.stability import belief_intervals
 from decision_studio.graph.critical_path import find_critical_path
 from decision_studio.graph.edge_weight import inflation as edge_inflation
-from decision_studio.reasoning.effective_graph import effective_strength
+from decision_studio.reasoning.effective_graph import (
+    effective_strength,
+    filter_effective,
+    is_claim_effective,
+    is_edge_effective,
+)
+from decision_studio.reasoning.decision_anchor import ORIGIN_FRAME, ROLE_OUTCOME
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +61,19 @@ def _build_nx_graph(
     claims: list[Claim],
     edges: list[CausalEdge],
 ) -> nx.DiGraph:
-    """Build a NetworkX DiGraph from ORM claim and edge objects."""
+    """Build the graph beliefs are propagated over: the reviewed graph only.
+
+    Human review is authoritative, so a rejected or deactivated claim or link
+    takes no part in propagation, and a strength the user set outranks the one
+    the model inferred. This builder used to take every row as stored: the
+    beliefs, intervals and critical path on the graph screen were computed as if
+    no review had happened, while the theories — built from the effective
+    snapshot — reflected it. Rejected elements are still returned by the API
+    (shown dimmed); they are simply absent from this graph, so they carry no
+    belief.
+    """
     g = nx.DiGraph()
+    claims, edges = filter_effective(list(claims), list(edges))
 
     for claim in claims:
         g.add_node(
@@ -70,7 +95,10 @@ def _build_nx_graph(
             str(edge.target_claim_id),
             edge_id=str(edge.id),
             mechanism=edge.mechanism,
-            strength=edge.strength,
+            strength=effective_strength(edge),
+            # Scales the Monte Carlo noise per edge (graph/stability.py). It was
+            # never passed, so every edge was shaken at full sigma.
+            link_confidence=getattr(edge, "link_confidence", None),
             time_delay=edge.time_delay,
             conditions=edge.conditions,
             reversible=edge.reversible,
@@ -153,9 +181,34 @@ def _assemble_graph_response(
     intervals: dict[str, tuple[float, float]] | None = None,
     graph_revision: int = 1,
     decision_objective: str | None = None,
+    decision_anchor: dict | None = None,
+    dependence: dict[str, dict] | None = None,
 ) -> GraphResponse:
     """Build a GraphResponse from DB objects and computed graph attributes."""
     critical_path_set = set(critical_path)
+
+    # Distances are measured on the graph as analysed — the effective graph,
+    # after the user's rejections — so a rejected link stops counting as a
+    # path to the decision the moment it is rejected.
+    outcome_ids = [
+        str(c.id) for c in claims
+        if getattr(c, "origin", None) == ORIGIN_FRAME
+        and getattr(c, "decision_role", None) == ROLE_OUTCOME
+    ]
+    distances: dict = {}
+    if outcome_ids:
+        active_ids = {str(c.id) for c in claims if is_claim_effective(c)}
+        effective = nx.DiGraph()
+        effective.add_nodes_from(active_ids)
+        effective.add_edges_from(
+            (str(e.source_claim_id), str(e.target_claim_id))
+            for e in edges
+            if is_edge_effective(e, active_ids) and not getattr(e, "is_feedback", False)
+        )
+        distances = anchor_distances(effective, [o for o in outcome_ids if o in active_ids])
+    anchored = bool(outcome_ids) or any(
+        getattr(c, "relevance", None) is not None for c in claims
+    )
     node_sensitivities = sensitivity.get("nodes", {})
     edge_sensitivities = sensitivity.get("edges", {})
 
@@ -185,12 +238,15 @@ def _assemble_graph_response(
                 source_sentence=getattr(claim, "source_sentence", None),
                 belief_low=intervals.get(node_id, (None, None))[0] if intervals else None,
                 belief_high=intervals.get(node_id, (None, None))[1] if intervals else None,
+                belief_if_dependent=(dependence or {}).get(node_id, {}).get("belief_if_dependent"),
+                shared_causes=(dependence or {}).get(node_id, {}).get("shared_with", []),
                 review_status=getattr(claim, "review_status", "accepted") or "accepted",
                 is_active=getattr(claim, "is_active", True),
                 user_note=getattr(claim, "user_note", None),
                 prior=getattr(claim, "prior", claim.confidence),
                 corroborated_by=getattr(claim, "corroborated_by", None),
                 duplicate_count=getattr(claim, "duplicate_count", 0) or 0,
+                **_anchor_fields(claim, distances.get(node_id), anchored),
             )
         )
 
@@ -210,6 +266,7 @@ def _assemble_graph_response(
                 source_tier=getattr(ev, "source_tier", 4) or 4,
                 freshness_score=getattr(ev, "freshness_score", 0.5) or 0.5,
                 published_date=getattr(ev, "published_date", None),
+                quality=document_labels(ev, edge.evidences),
             )
             for ev in edge.evidences
         ]
@@ -279,7 +336,29 @@ def _assemble_graph_response(
         has_temporal=has_temporal,
         graph_revision=graph_revision,
         decision_objective=decision_objective,
+        decision_anchor=decision_anchor,
     )
+
+
+def _anchor_fields(claim: Claim, distance: int | None, anchored: bool) -> dict:
+    """A claim's relation to the decision anchor, for the response.
+
+    Without an anchor every claim is in the lens and none is peripheral, so a
+    client that applies the lens unconditionally shows an unanchored project
+    exactly as before.
+    """
+    stated = getattr(claim, "relevance", None)
+    return {
+        "origin": getattr(claim, "origin", "ai") or "ai",
+        "decision_role": getattr(claim, "decision_role", None),
+        "relevance": stated,
+        "relevance_reason": getattr(claim, "relevance_reason", None),
+        "bears_on": getattr(claim, "bears_on", None),
+        "anchor_distance": distance,
+        "effective_relevance": effective_relevance(stated, distance),
+        "is_peripheral": anchored and is_peripheral(stated, distance),
+        "in_lens": (not anchored) or in_lens(stated, distance),
+    }
 
 
 async def _load_project_graph(
@@ -321,11 +400,13 @@ async def _compute_full_graph(
 
     graph_revision = getattr(project, "graph_revision", 1) or 1
     decision_objective = getattr(project, "decision_objective", None)
+    decision_anchor = getattr(project, "decision_anchor", None)
 
     if not claims:
         return GraphResponse(
             project_id=project_id, claims=[], edges=[], has_temporal=has_temporal,
             graph_revision=graph_revision, decision_objective=decision_objective,
+            decision_anchor=decision_anchor,
         )
 
     graph = _build_nx_graph(claims, edges)
@@ -334,6 +415,9 @@ async def _compute_full_graph(
     # Monte Carlo rather than one-node worst-case perturbation: uncertainty
     # compounds along chains, and per-edge noise is scaled by link_confidence.
     intervals = belief_intervals(graph)
+    # Where noisy-OR's independence assumption carries the number: a second
+    # figure with related causes combined as one.
+    dependence = dependence_report(graph)
     # Skip expensive sensitivity analysis on graph load — it deep-copies the
     # graph 2× per edge and re-propagates beliefs each time (1,244+ runs on a
     # 622-edge graph).  Sensitivity is available via a dedicated endpoint.
@@ -346,6 +430,8 @@ async def _compute_full_graph(
         intervals=intervals,
         graph_revision=graph_revision,
         decision_objective=decision_objective,
+        decision_anchor=decision_anchor,
+        dependence=dependence,
     )
 
 
@@ -367,6 +453,7 @@ async def get_graph(
     return await _compute_full_graph(project_id, session)
 
 
+# DEAD-CODE-CANDIDATE DC-26: no frontend caller; bypasses the review audit log (strength edits go through PATCH .../edges/{id}/review). See docs/DEAD_CODE_REPORT.md
 @router.patch("/edge/{edge_id}", response_model=EdgeResponse)
 async def update_edge(
     edge_id: UUID,
@@ -403,6 +490,7 @@ async def update_edge(
             source_tier=getattr(ev, "source_tier", 4) or 4,
             freshness_score=getattr(ev, "freshness_score", 0.5) or 0.5,
             published_date=getattr(ev, "published_date", None),
+            quality=document_labels(ev, edge.evidences),
         )
         for ev in edge.evidences
     ]

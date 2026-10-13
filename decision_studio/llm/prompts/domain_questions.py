@@ -1,3 +1,4 @@
+# DEAD-CODE-CANDIDATE DC-04 [module]: prompt for DC-01; nothing else imports it. See docs/DEAD_CODE_REPORT.md
 """Prompt for proposing framing questions in an unanticipated domain.
 
 The core catalogue is fixed and the six domain packs are written by hand,

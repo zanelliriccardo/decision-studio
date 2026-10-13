@@ -58,6 +58,10 @@ def _apply_overrides(
             # Create a detached copy so we don't modify the DB object
             patched = copy.copy(edge)
             patched.strength = overrides[edge_id_str]
+            # The graph honours a user's strength override over `strength`;
+            # a scenario is asking "what if it were this instead", so its value
+            # must win over the override too.
+            patched.strength_override = None
             result.append(patched)
         else:
             result.append(edge)
@@ -136,7 +140,9 @@ async def list_scenarios(
         raise HTTPException(status_code=404, detail="Project not found")
 
     result = await session.execute(
-        select(Scenario).where(Scenario.project_id == project_id)
+        # Decision cases (upside/downside assumptions) share the table but are
+        # not forks; they are listed by reasoning/decision_scenarios.py.
+        select(Scenario).where(Scenario.project_id == project_id, Scenario.decision_case.is_(None))
     )
     scenarios = result.scalars().all()
 

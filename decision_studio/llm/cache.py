@@ -258,6 +258,7 @@ class CachedLLMClient(LLMClient):
         return result
 
     @property
+    # DEAD-CODE-CANDIDATE DC-17: no callers. See docs/DEAD_CODE_REPORT.md
     def cache_stats(self) -> dict[str, int]:
         """Return cache statistics."""
         return self._cache.stats

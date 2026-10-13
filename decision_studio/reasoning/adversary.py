@@ -45,6 +45,8 @@ from decision_studio.reasoning.decision_context import (
     decision_objective,
     render_objective,
 )
+from decision_studio.reasoning.decision_anchor import project_anchor
+from decision_studio.reasoning.theory_value import record_evidence, tripwire_likelihood
 
 logger = logging.getLogger(__name__)
 
@@ -271,8 +273,14 @@ async def generate_tripwires(
     claims_by_id, objective = await _load_context(session, project_id)
     decision = objective or "(decision not stated)"
     change_mind = None
-    success = None
-    deadline = None
+    # The anchor supplies what the removed questionnaire used to: what success
+    # looks like and when the decision is due.
+    anchor = await project_anchor(session, project_id)
+    success = "; ".join(
+        f"{y['label']}" + (f" ({y['measure']})" if y.get("measure") else "")
+        for y in (anchor or {}).get("outcomes", [])
+    ) or None
+    deadline = (anchor or {}).get("deadline") or None
 
     client = llm or get_llm_client(enable_cache=False)
     semaphore = asyncio.Semaphore(concurrency)
@@ -367,12 +375,19 @@ async def record_observation(
     *,
     observed: bool,
     note: str | None = None,
+    likelihood_ratio: float | None = None,
+    event: str | None = None,
 ) -> TheoryTripwire:
     """Record whether a tripwire fired, and mark the theory accordingly.
 
     A falsifying tripwire that fires makes its theory stale: the thing the user
     said would change their mind has happened, so the conclusion should be
     revisited rather than left standing.
+
+    Either way the outcome is evidence, and is recorded against the theory's
+    conviction as a likelihood ratio — the caller's, or the default for the
+    tripwire's direction. A tripwire is the one place the world reports back,
+    and an observation that moved no belief would be decoration.
 
     Raises:
         LookupError: unknown tripwire, or it belongs to another project.
@@ -396,6 +411,15 @@ async def record_observation(
 
     theory = await session.get(Theory, row.theory_id)
     if theory is not None:
+        await record_evidence(
+            session, project_id, theory.theory_key,
+            likelihood_ratio if likelihood_ratio is not None
+            else tripwire_likelihood(row.direction, observed, row.decisiveness),
+            source="tripwire", source_id=row.id,
+            note=f"{'Observed' if observed else 'Not observed'}: {row.observable}",
+            event=event,
+            commit=False,
+        )
         falsified = observed and row.direction == "falsifies"
         confirmed_absent = not observed and row.direction == "confirms"
         if falsified or confirmed_absent:
@@ -406,4 +430,35 @@ async def record_observation(
 
     await session.commit()
     await session.refresh(row)
+    return row
+
+
+async def set_tripwire_decisiveness(
+    session: AsyncSession, project_id: UUID, tripwire_id: UUID, decisiveness: str
+) -> TheoryTripwire:
+    """State how much a tripwire would count, before it is observed.
+
+    Raises:
+        LookupError: unknown tripwire.
+        ValueError: already observed — a weight chosen after seeing the result
+            could be fitted to it, which is exactly what stating it in advance
+            prevents.
+    """
+    from decision_studio.reasoning.theory_value import DECISIVENESS
+
+    if decisiveness not in DECISIVENESS:
+        raise ValueError(f"Decisiveness must be one of {', '.join(DECISIVENESS)}")
+    row = (
+        await session.execute(
+            select(TheoryTripwire)
+            .join(Theory, Theory.id == TheoryTripwire.theory_id)
+            .where(TheoryTripwire.id == tripwire_id, Theory.project_id == project_id)
+        )
+    ).scalars().first()
+    if row is None:
+        raise LookupError(f"Tripwire {tripwire_id} not found in project")
+    if row.status != "pending":
+        raise ValueError("Decisiveness is stated before observing, and this tripwire has been observed")
+    row.decisiveness = decisiveness
+    await session.commit()
     return row

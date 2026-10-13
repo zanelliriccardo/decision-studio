@@ -41,7 +41,9 @@ from decision_studio.llm.prompts.recommendation import (
     RECOMMENDATION_SYSTEM,
 )
 from decision_studio.reasoning.calibration import band
+from decision_studio.reasoning.decision_anchor import normalise_anchor
 from decision_studio.reasoning.decision_context import decision_objective
+from decision_studio.reasoning.theory_value import convictions, option_coverage
 from decision_studio.reasoning.theories import list_current_theories
 
 logger = logging.getLogger(__name__)
@@ -57,7 +59,9 @@ class RecommendationError(RuntimeError):
     """Raised when no recommendation could be produced."""
 
 
-def _render_theory(theory: Theory, index: int, objections, tripwires) -> str:
+def _render_theory(
+    theory: Theory, index: int, objections, tripwires, conviction=None
+) -> str:
     """One theory as the synthesiser sees it: claim, caveats, and what would
     disprove it — all three, because a recommendation that ignores the caveats
     is worse than no recommendation."""
@@ -66,6 +70,20 @@ def _render_theory(theory: Theory, index: int, objections, tripwires) -> str:
         f"  {theory.summary}",
         f"  confidence: {band(theory.confidence)}; impact: {theory.business_impact}",
     ]
+    if getattr(theory, "option_key", None):
+        parts.append(
+            f"  a theory of option {theory.option_key}: predicts it "
+            f"{theory.predicted_effect or 'has an unclear effect on'} the outcome"
+            + ("" if theory.reaches_outcome
+               else " — but its chain never reaches an outcome in the graph")
+        )
+    if conviction is not None and conviction.current is not None:
+        moved = (
+            f", moved from {band(conviction.prior)} by what was observed"
+            if conviction.prior is not None and abs(conviction.current - conviction.prior) >= 0.05
+            else ""
+        )
+        parts.append(f"  the decider's own conviction: {band(conviction.current)}{moved}")
     if theory.recommendation:
         parts.append(f"  its own recommendation: {theory.recommendation}")
 
@@ -131,12 +149,28 @@ async def generate_recommendation(
         tripwires.setdefault(row.theory_id, []).append(row)
 
     objective = await decision_objective(session, project_id)
+    conviction_map = await convictions(session, project_id, [t.theory_key for t in theories])
     rendered = "\n\n".join(
         _render_theory(
-            theory, index, objections.get(theory.id, []), tripwires.get(theory.id, [])
+            theory, index, objections.get(theory.id, []), tripwires.get(theory.id, []),
+            conviction_map.get(str(theory.theory_key)),
         )
         for index, theory in enumerate(theories)
     )
+    # Options no theory examined: a recommendation between options where one
+    # was never looked at is not a comparison, and the model must say so.
+    anchor = normalise_anchor(project.decision_anchor)
+    uncovered = [
+        f"{row['key']} ({row['label']})"
+        for row in option_coverage(anchor, theories)
+        if not (row["achieves"] or row["threatens"] or row["unclear"])
+    ]
+    if uncovered:
+        rendered += (
+            "\n\nOPTIONS NO EXPLANATION EXAMINED: " + ", ".join(uncovered)
+            + ". The graph says nothing about them; do not recommend against them "
+            "as if it did."
+        )
 
     user = "\n\n".join(
         part

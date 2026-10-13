@@ -109,6 +109,43 @@ class DecisionObjectiveRequest(BaseModel):
     decision_objective: str = Field(..., max_length=2000)
 
 
+class AnchorOption(BaseModel):
+    key: str = ""
+    label: str = Field(..., max_length=200)
+
+
+class AnchorOutcome(BaseModel):
+    key: str = ""
+    label: str = Field(..., max_length=200)
+    measure: str = Field("", max_length=200)
+
+
+class DecisionAnchor(BaseModel):
+    """The decision, stated so the pipeline can steer by it.
+
+    Keys (O1, Y1 ...) are optional on input and assigned when missing; existing
+    keys are preserved because claims refer to them.
+    """
+
+    decision: str = Field(..., max_length=2000)
+    options: list[AnchorOption] = Field(default_factory=list, max_length=10)
+    outcomes: list[AnchorOutcome] = Field(default_factory=list, max_length=10)
+    deadline: str = Field("", max_length=200)
+    constraints: list[str] = Field(default_factory=list, max_length=10)
+    status: str = "draft"
+
+
+class DecisionAnchorResponse(BaseModel):
+    project_id: UUID
+    anchor: DecisionAnchor | None = None
+
+
+class DecisionAnchorSaveResponse(DecisionAnchorResponse):
+    """The saved anchor, and what saving it changed in an existing graph."""
+
+    report: dict[str, int] = Field(default_factory=dict)
+
+
 # --- Theories ---
 
 
@@ -169,6 +206,27 @@ class TheoryResponse(BaseModel):
     change_kind: str | None = None
     change_explanation: str | None = None
     created_at: datetime | None = None
+    # --- Theory of value ---
+    #: The anchor option this is a theory of, and what it predicts for it.
+    option_key: str | None = None
+    predicted_effect: str | None = None
+    outcome_keys: list[str] = []
+    #: Computed from the validated chain, not taken from the model.
+    reaches_outcome: bool = False
+    # --- The decider's conviction, apart from the model's confidence ---
+    conviction: float | None = None
+    conviction_prior: float | None = None
+
+
+class OptionCoverage(BaseModel):
+    """How many current theories argue for and against one option."""
+
+    key: str
+    label: str
+    achieves: int = 0
+    threatens: int = 0
+    unclear: int = 0
+    reaching_outcome: int = 0
 
 
 class ChangeSummary(BaseModel):
@@ -183,6 +241,8 @@ class TheoryListResponse(BaseModel):
     graph_revision: int
     theory_revision: int | None = None
     stale_count: int = 0
+    #: One row per anchor option. An option with no theory is a finding.
+    option_coverage: list[OptionCoverage] = []
 
 
 class TheoryGenerationResponse(BaseModel):
@@ -241,11 +301,25 @@ class TripwireResponse(BaseModel):
     status: Literal["pending", "observed", "not_observed", "expired"]
     observed_at: datetime | None = None
     observed_note: str | None = None
+    #: How much the decider said, in advance, this observation would count.
+    decisiveness: Literal["weak", "moderate", "decisive"] = "moderate"
+
+
+class DecisivenessRequest(BaseModel):
+    """Stated before the result is known, so the weight cannot be fitted to it."""
+
+    decisiveness: Literal["weak", "moderate", "decisive"]
 
 
 class ObservationRequest(BaseModel):
     observed: bool
     note: str | None = Field(None, max_length=2000)
+    #: How much more likely this outcome is if the theory holds. Omitted, the
+    #: tripwire's direction supplies a default (reasoning/theory_value.py).
+    likelihood_ratio: float | None = Field(None, gt=0, le=20)
+    #: The real-world event this observation came from. Observations of one
+    #: event count once per theory (reasoning/theory_value.replay).
+    event: str | None = Field(None, max_length=200)
 
 
 class ReferenceCaseResponse(BaseModel):
@@ -260,7 +334,18 @@ class ReferenceCaseResponse(BaseModel):
     source: str = "user_recall"
 
 
+class OutsideViewRequest(BaseModel):
+    """The decider's own account of comparable past decisions.
+
+    Omitted, the account saved on the project is re-read (e.g. after the
+    theories were regenerated). Empty clears it and its base rates.
+    """
+
+    recollection: str | None = Field(None, max_length=4000)
+
+
 class OutsideViewResponse(BaseModel):
+    recollection: str | None = None
     cases: list[ReferenceCaseResponse] = []
     checked: int = 0
     diverging: int = 0
@@ -468,17 +553,20 @@ class GenerateTheoriesRequest(BaseModel):
 
 
 
+# DEAD-CODE-CANDIDATE DC-22: clarification-system response model; no route uses it. See docs/DEAD_CODE_REPORT.md
 class AnswerResponse(BaseModel):
     affected_theory_ids: list[UUID] = []
     stale_theory_count: int = 0
 
 
+# DEAD-CODE-CANDIDATE DC-22: clarification-system request model; no route uses it. See docs/DEAD_CODE_REPORT.md
 class QuestionStatusRequest(BaseModel):
     status: QuestionStatus
 
 
 
 
+# DEAD-CODE-CANDIDATE DC-22: clarification-system model; used only by dead frontend DC-36. See docs/DEAD_CODE_REPORT.md
 class ProposedGraphChange(BaseModel):
     """A graph edit an answer suggests. Never applied automatically."""
 

@@ -63,6 +63,7 @@ def band(value: float | None) -> str:
     return BANDS[-1].key
 
 
+# DEAD-CODE-CANDIDATE DC-19: no callers. See docs/DEAD_CODE_REPORT.md
 def band_range(value: float | None) -> tuple[float, float] | None:
     """The range a value's band covers, for rendering a bar rather than a point."""
     key = band(value)
@@ -72,6 +73,7 @@ def band_range(value: float | None) -> tuple[float, float] | None:
     return None
 
 
+# DEAD-CODE-CANDIDATE DC-19: no callers. See docs/DEAD_CODE_REPORT.md
 def round_for_display(value: float | None) -> float | None:
     """One decimal place. Two implies a resolution nothing here has.
 
@@ -87,6 +89,7 @@ def round_for_display(value: float | None) -> float | None:
         return None
 
 
+# DEAD-CODE-CANDIDATE DC-19: no callers. See docs/DEAD_CODE_REPORT.md
 def interval_is_informative(low: float | None, high: float | None) -> bool:
     """False when an interval is so wide it says nothing.
 

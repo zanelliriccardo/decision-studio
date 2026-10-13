@@ -28,7 +28,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from decision_studio.db.models import ReferenceCase, Theory
+from decision_studio.db.models import Project, ReferenceCase, Theory
 from decision_studio.llm.client import LLMClient, get_llm_client
 from decision_studio.llm.prompts.outside_view import (
     OUTSIDE_VIEW_MATCH_SCHEMA,
@@ -61,23 +61,78 @@ def is_material(delta: float | None) -> bool:
     return delta is not None and abs(delta) >= MATERIAL_DIVERGENCE
 
 
-def divergence_note(
-    case: ReferenceCase, confidence: float, delta: float
-) -> str:
-    """A sentence the user can act on, in their own terms."""
-    direction = "more optimistic than" if delta > 0 else "more pessimistic than"
-    return (
-        f"This theory is {direction} your own experience: you recalled "
-        f"{case.cases_with_outcome} of {case.cases_total} comparable cases where "
-        f"{case.outcome} ({case.base_rate:.0%}), but this theory implies "
-        f"{confidence:.0%}. If this case genuinely differs, say why."
+def implied_rate(belief: float, polarity: str | None) -> float:
+    """How often the reference outcome should happen, if the theory is believed.
+
+    A theory can predict the recalled outcome ("the schedule slips") or its
+    opposite ("we ship on time"). Believing the second at 85% implies the
+    recalled outcome at 15%, and that is the number to set against the base
+    rate. Comparing 85% with it directly would flag a theory that agrees with
+    the decider's experience as contradicting it.
+    """
+    return 1.0 - belief if polarity == "opposite" else belief
+
+
+def compare(
+    case: ReferenceCase,
+    polarity: str | None,
+    *,
+    conviction: float | None,
+    model_confidence: float | None,
+) -> tuple[float, str]:
+    """The theory against its reference case: ``(delta, note)``.
+
+    Measured against the decider's conviction when they have stated one: the
+    outside view exists to catch *human* optimism about this case, and the
+    model's confidence is only a stand-in until there is a human number.
+    ``delta`` is in terms of the recalled outcome: positive means this theory
+    expects it more often than it happened before.
+    """
+    use_conviction = conviction is not None
+    belief = conviction if use_conviction else (model_confidence or 0.0)
+    implied = implied_rate(belief, polarity)
+    delta = implied - case.base_rate
+    whose = "your conviction" if use_conviction else "the model's confidence"
+    stance = (
+        f"expects {case.outcome!r} not to happen" if polarity == "opposite"
+        else f"expects {case.outcome!r}"
+    )
+    history = (
+        f"you recalled {case.cases_with_outcome} of {case.cases_total} comparable "
+        f"cases where {case.outcome} ({case.base_rate:.0%})"
+    )
+    if not is_material(delta):
+        return delta, (
+            f"Consistent with your experience: {history}. This theory {stance}, and "
+            f"at {whose} of {belief:.0%} it implies {implied:.0%}."
+        )
+    more_or_less = "more often" if delta > 0 else "less often"
+    return delta, (
+        f"Differs from your experience: {history}. This theory {stance}; at {whose} "
+        f"of {belief:.0%} it implies {implied:.0%}, {more_or_less} than before. "
+        "If this case genuinely differs, say why; if not, revisit the conviction."
+    )
+
+
+def current_comparison(theory: Theory, conviction: float | None) -> tuple[float | None, str | None]:
+    """The theory's outside-view comparison, recomputed with today's conviction.
+
+    Falls back to what was stored at matching time when the matched case is
+    gone (the recollection was re-read) or was never loaded.
+    """
+    case = getattr(theory, "outside_view_case", None)
+    if case is None:
+        return theory.outside_view_delta, theory.outside_view_note
+    return compare(
+        case, theory.outside_view_polarity,
+        conviction=conviction, model_confidence=theory.confidence,
     )
 
 
 async def extract_reference_cases(
     session: AsyncSession,
     project_id: UUID,
-    recollection: str | None,
+    recollection: str | None = None,
     *,
     llm: LLMClient | None = None,
 ) -> list[ReferenceCase]:
@@ -92,13 +147,26 @@ async def extract_reference_cases(
     Returns an empty list when nothing was supplied, or what was supplied
     carries no countable cases. Inventing a denominator would be
     worse than having none.
+
+    ``None`` re-reads the recollection saved on the project; a string replaces
+    it, so the summary page can show the user their own words next time.
     """
+    project = await session.get(Project, project_id)
+    if recollection is None:
+        recollection = project.outside_view_recollection if project else None
+    elif project is not None:
+        project.outside_view_recollection = recollection.strip()[:4000] or None
     # The recollection used to come from a framing answer. With the
     # questionnaire gone it is supplied explicitly by whoever wants the outside
     # view — the caller has it, and inferring it from the documents would defeat
     # the purpose: the point is what *you* have seen happen before, not what the
     # uploaded material says.
     if not recollection or not str(recollection).strip():
+        # Cleared: the old base rates no longer stand for anything the user said.
+        await session.execute(
+            delete(ReferenceCase).where(ReferenceCase.project_id == project_id)
+        )
+        await session.commit()
         return []
 
     decision = await decision_objective(session, project_id) or ""
@@ -218,7 +286,10 @@ async def check_theories_against_base_rates(
         for i, c in enumerate(cases)
     )
     theory_lines = "\n".join(
-        f"[T{i}] {t.title}: {t.summary}" for i, t in enumerate(theories)
+        f"[T{i}] {t.title}: {t.summary}"
+        + (f" (predicts option {t.option_key} {t.predicted_effect} the outcome)"
+           if t.option_key and t.predicted_effect else "")
+        for i, t in enumerate(theories)
     )
 
     client = llm or get_llm_client(enable_cache=False)
@@ -229,6 +300,17 @@ async def check_theories_against_base_rates(
         max_tokens=1024,
         temperature=EXTRACTION_TEMPERATURE,
     )
+
+    from decision_studio.reasoning.theory_value import convictions as load_convictions
+
+    held = await load_convictions(session, project_id, {t.theory_key for t in theories})
+    for theory in theories:
+        # Re-matched from scratch: a match against a case that no longer exists
+        # would keep flagging a number the user has since corrected.
+        theory.outside_view_case = None
+        theory.outside_view_polarity = None
+        theory.outside_view_delta = None
+        theory.outside_view_note = None
 
     diverging = 0
     checked = 0
@@ -245,23 +327,25 @@ async def check_theories_against_base_rates(
 
         theory = theories[theory_index]
         case = cases[case_index]
+        polarity = "opposite" if raw.get("polarity") == "opposite" else "same"
 
-        # The theory's confidence is in "this explanation holds" terms; the base
+        # The theory's belief is in "this explanation holds" terms; the base
         # rate is in "the outcome occurred" terms. They are comparable only when
         # the model says the theory is *about* that outcome, which is exactly
-        # what it was asked.
-        delta = (theory.confidence or 0.0) - case.base_rate
+        # what it was asked, and only once turned the same way round.
+        conviction = held.get(str(theory.theory_key))
+        delta, note = compare(
+            case, polarity,
+            conviction=conviction.current if conviction else None,
+            model_confidence=theory.confidence,
+        )
+        theory.outside_view_case = case
+        theory.outside_view_polarity = polarity
         theory.outside_view_delta = delta
+        theory.outside_view_note = note
         checked += 1
-
         if is_material(delta):
-            theory.outside_view_note = divergence_note(case, theory.confidence, delta)
             diverging += 1
-        else:
-            theory.outside_view_note = (
-                f"Consistent with your experience: {case.cases_with_outcome} of "
-                f"{case.cases_total} comparable cases where {case.outcome}."
-            )
 
     await session.commit()
 

@@ -1,3 +1,4 @@
+// DEAD-CODE-CANDIDATE DC-39 [file]: no route renders it; unreachable from main.tsx. See docs/DEAD_CODE_REPORT.md
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FileText, ChevronDown, ChevronUp, Activity, Lightbulb, Loader2, GitBranch, RefreshCw } from 'lucide-react'

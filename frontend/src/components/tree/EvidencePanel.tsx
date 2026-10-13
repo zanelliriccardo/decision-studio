@@ -6,6 +6,7 @@ import ReviewControls, { ReviewStatusBadge } from './ReviewControls.tsx'
 import type { ReviewPayload } from '../../types/reasoning.ts'
 import { CAUSAL_TYPE_META, CONDITION_TYPE_LABELS, BIAS_SEVERITY_COLORS, SOURCE_TIER_LABELS } from '../../lib/visualConstants.ts'
 import Slider from '../ui/Slider.tsx'
+import QualityChips from '../evidence/QualityChips.tsx'
 import Progress from '../ui/Progress.tsx'
 
 interface EvidencePanelProps {
@@ -559,6 +560,11 @@ export function EvidenceCard({
           </span>
         )}
       </div>
+      {evidence.quality && evidence.quality.length > 0 && (
+        <div className="mb-1.5">
+          <QualityChips labels={evidence.quality} />
+        </div>
+      )}
 
       {/* Snippet with expand/collapse */}
       <p className={`text-xs text-text-secondary leading-relaxed mb-1 ${expanded ? '' : 'line-clamp-3'}`}>
